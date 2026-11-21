@@ -16,7 +16,7 @@
 
 **简体中文** · [English](README_EN.md)
 
-[核心特性](#为什么选择-yomo) · [菜单栏样式](#菜单栏状态徽章) · [模块与示例](#四大核心模块与使用示例) · [快速开始](#快速开始) · [常见问题](#常见问题)
+[核心特性](#为什么选择-yomo) · [菜单栏样式](#菜单栏状态徽章) · [模块与示例](#五大核心模块与使用示例) · [快速开始](#快速开始) · [常见问题](#常见问题)
 
 <br />
 
@@ -71,7 +71,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ---
 
-## 四大核心模块与使用示例
+## 五大核心模块与使用示例
 
 所有扩展模块均可在「**控制台 → 模块总览**」中独立开关。不需要的模块关闭后不会参与面板渲染或刷新。
 
@@ -173,6 +173,30 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ---
 
+### 5. 鼠标滚轮翻转（ScrollReverser）
+
+<table>
+  <tr>
+    <td width="38%" align="center">
+      <img src="docs/screenshots/popover-scroll.png" alt="鼠标滚轮翻转二级页" width="270" />
+    </td>
+    <td width="62%" valign="top">
+      <p><b>核心能力</b></p>
+      <ul>
+        <li><b>鼠标与触控板独立方向</b>：基于底层 Quartz <code>CGEventTap</code> 精准区分外接鼠标滚轮与触控板手势，让外接鼠标恢复传统滚动方向，同时完整保留 Mac 触控板的自然滚动。</li>
+        <li><b>垂直 / 水平独立控制</b>：支持单独开关垂直滚轮（上下滚动）与水平滚轮（左右倾斜 / 侧滚轮）翻转。</li>
+        <li><b>零空转开销</b>：关闭开关或停用模块时彻底卸载 <code>CGEventTap</code>，后台 0% CPU 占用。</li>
+      </ul>
+      <p><b>使用示例</b></p>
+      <blockquote>
+        习惯了触控板「自然滚动」，但插上外接鼠标后觉得滚轮方向反了？展开 YOMO → 点「滚轮翻转」开关即可即刻生效，再也不用为这一个需求单独装第三方滚轮软件。
+      </blockquote>
+    </td>
+  </tr>
+</table>
+
+---
+
 ### 外观与个性化设置
 
 <table>
@@ -197,7 +221,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ### 方式一：直接下载 Release 安装包（推荐）
 
-1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.0.0.dmg`**（同时提供 **`YOMO-v1.0.0-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
+1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.1.0.dmg`**（同时提供 **`YOMO-v1.1.0-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
 2. 双击打开 `.dmg`，将 **`YOMO.app`** 拖入 **`Applications`（应用程序）** 文件夹。
 3. 打开 **YOMO**，在浮窗底部点击 **「外观与样式」→ 开启「开机自动启动」**，即可随系统静默常驻。
 
@@ -232,7 +256,7 @@ open dist/YOMO.app
 
 # 3.（可选）一键生成 DMG 安装包 + 干净源码 ZIP + SHA256 校验文件
 ./scripts/build-release.sh
-# 产物输出至 dist/YOMO-v1.0.0.dmg、dist/YOMO-v1.0.0-source.zip、dist/SHA256SUMS.txt
+# 产物输出至 dist/YOMO-v1.1.0.dmg、dist/YOMO-v1.1.0-source.zip、dist/SHA256SUMS.txt
 ```
 
 ### 首次运行权限说明
@@ -243,6 +267,7 @@ YOMO 为 **100% 本地离线应用**，不包含任何遥测上报或网络请�
 | :--- | :--- | :--- |
 | **定位服务（Location）** | macOS 14+ 要求定位权限才能读取当前 Wi-Fi 名称（SSID）与扫描附近网络 | 可选（不授权仍可正常查看信号强度与网速） |
 | **蓝牙（Bluetooth）** | 读取已配对蓝牙设备状态与 AirPods 电量、执行一键连断 | 使用蓝牙模块时需要 |
+| **辅助功能（Accessibility）** | 监听并翻转外接鼠标滚轮事件（不影响触控板手势） | 仅使用「鼠标滚轮翻转」模块时需要 |
 
 ---
 
