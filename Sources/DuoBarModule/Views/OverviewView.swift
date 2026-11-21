@@ -228,62 +228,75 @@ struct OverviewView: View {
             }
             .fixedSize(horizontal: false, vertical: true)
 
-            // 2. Compact Mouse Scroll Reverser Strip (1-click toggle + tap to configure)
+            // 2. Compact Mouse Scroll Reverser Strip (isolated toggle area + dedicated expand button)
             if moduleSettings.scrollReverserEnabled {
-                HStack(spacing: 9) {
+                HStack(spacing: 0) {
                     Button {
                         scrollReverserStore.toggle()
                     } label: {
-                        ZStack {
-                            if scrollReverserStore.isActive {
-                                Circle()
-                                    .fill(Color.accentColor)
-                                    .frame(width: 28, height: 28)
-                            } else {
-                                GlassNeutralCircle(size: 28) { EmptyView() }
+                        HStack(spacing: 9) {
+                            ZStack {
+                                if scrollReverserStore.isActive {
+                                    Circle()
+                                        .fill(Color.accentColor)
+                                        .frame(width: 28, height: 28)
+                                } else {
+                                    GlassNeutralCircle(size: 28) { EmptyView() }
+                                }
+                                Image(systemName: scrollReverserStore.isActive ? "computermouse.fill" : "computermouse")
+                                    .font(.system(size: 12.5, weight: .semibold))
+                                    .foregroundStyle(scrollReverserStore.isActive ? Color.white : Color.primary)
                             }
-                            Image(systemName: scrollReverserStore.isActive ? "computermouse.fill" : "computermouse")
-                                .font(.system(size: 12.5, weight: .semibold))
-                                .foregroundStyle(scrollReverserStore.isActive ? Color.white : Color.primary)
+
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("鼠标滚轮翻转")
+                                    .font(.system(size: 12.5, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                Text(scrollReverserStore.statusSubtitle)
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(scrollReverserStore.isActive ? Color.accentColor : Color.primary.opacity(0.68))
+                                    .lineLimit(1)
+                            }
+
+                            Spacer(minLength: 4)
+
+                            Toggle("", isOn: Binding(
+                                get: { scrollReverserStore.isActive },
+                                set: { scrollReverserStore.setEnabled($0) }
+                            ))
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .labelsHidden()
+                            .allowsHitTesting(false)
                         }
+                        .padding(.leading, 10)
+                        .padding(.trailing, 9)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help(scrollReverserStore.isActive ? "关闭滚轮翻转" : "开启滚轮翻转")
 
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("鼠标滚轮翻转")
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                        Text(scrollReverserStore.statusSubtitle)
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(scrollReverserStore.isActive ? Color.accentColor : Color.primary.opacity(0.68))
-                            .lineLimit(1)
+                    Divider()
+                        .frame(height: 20)
+                        .opacity(0.45)
+
+                    Button {
+                        onNavigate(.scrollReverser)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 30, height: 36)
+                            .contentShape(Rectangle())
                     }
-
-                    Spacer(minLength: 4)
-
-                    Toggle("", isOn: Binding(
-                        get: { scrollReverserStore.isActive },
-                        set: { scrollReverserStore.setEnabled($0) }
-                    ))
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .labelsHidden()
-
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(.tertiary)
+                    .buttonStyle(HighlightRowStyle(hover: scrollHover, cornerRadius: 10))
+                    .padding(.horizontal, 4)
+                    .help("滚轮翻转详细设置")
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
                 .glassBentoCard(cornerRadius: 15)
-                .opacity(scrollHover.isHovering ? 0.94 : 1.0)
-                .contentShape(Rectangle())
-                .onHover { scrollHover.isHovering = $0 }
-                .onTapGesture {
-                    onNavigate(.scrollReverser)
-                }
             }
 
             // 3. Tactile Control Center Volume Scrubber
