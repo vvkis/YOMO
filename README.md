@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/assets/icon.png" alt="YOMO Icon" width="96" height="96" />
+
 # YOMO
 
 **Y**ou **O**nly **M**enu **O**nce
