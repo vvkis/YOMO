@@ -4,6 +4,7 @@ import DuoBarModule
 import DisplayHiDPIModule
 import KeepAwakeModule
 import AudioBluetoothModule
+import ScrollReverserModule
 
 public enum ConsoleSection: String, CaseIterable, Identifiable {
     case dashboard = "dashboard"
@@ -11,6 +12,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
     case audioBluetooth = "audioBluetooth"
     case hidpi = "hidpi"
     case keepAwake = "keepAwake"
+    case scrollReverser = "scrollReverser"
 
     public var id: String { rawValue }
 
@@ -21,6 +23,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
         case .audioBluetooth: return "蓝牙与音频 (AirPods)"
         case .hidpi: return "显示器 / HiDPI"
         case .keepAwake: return "防休眠"
+        case .scrollReverser: return "鼠标滚轮翻转"
         }
     }
 
@@ -31,6 +34,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
         case .audioBluetooth: return "airpodspro"
         case .hidpi: return "display"
         case .keepAwake: return "cup.and.saucer"
+        case .scrollReverser: return "computermouse"
         }
     }
 }
@@ -47,6 +51,7 @@ struct HubConsoleView: View {
     @ObservedObject var displayStore: DisplayHiDPIStore
     @ObservedObject var keepAwakeStore: KeepAwakeStore
     @ObservedObject var audioBluetoothStore: AudioBluetoothStore
+    @ObservedObject var scrollReverserStore: ScrollReverserStore
 
     var body: some View {
         NavigationSplitView {
@@ -66,6 +71,7 @@ struct HubConsoleView: View {
                         displayStore: displayStore,
                         keepAwakeStore: keepAwakeStore,
                         audioBluetoothStore: audioBluetoothStore,
+                        scrollReverserStore: scrollReverserStore,
                         onSelect: { viewModel.selectedSection = $0 }
                     )
                 case .duobar:
@@ -76,6 +82,8 @@ struct HubConsoleView: View {
                     DisplayHiDPIConsoleView(store: displayStore, moduleSettings: moduleSettings)
                 case .keepAwake:
                     KeepAwakeConsoleView(store: keepAwakeStore, moduleSettings: moduleSettings)
+                case .scrollReverser:
+                    ScrollReverserConsoleView(store: scrollReverserStore, moduleSettings: moduleSettings)
                 }
             }
             .navigationTitle(viewModel.selectedSection.title)
@@ -90,6 +98,7 @@ private struct DashboardHomeView: View {
     @ObservedObject var displayStore: DisplayHiDPIStore
     @ObservedObject var keepAwakeStore: KeepAwakeStore
     @ObservedObject var audioBluetoothStore: AudioBluetoothStore
+    @ObservedObject var scrollReverserStore: ScrollReverserStore
     let onSelect: (ConsoleSection) -> Void
 
     var body: some View {
@@ -133,7 +142,7 @@ private struct DashboardHomeView: View {
                         onOpen: { onSelect(.hidpi) }
                     )
 
-                    // Module 3: KeepAwake
+                    // Module 4: KeepAwake
                     ModuleSummaryCard(
                         icon: "cup.and.saucer.fill",
                         tint: .orange,
@@ -148,6 +157,23 @@ private struct DashboardHomeView: View {
                             }
                         ),
                         onOpen: { onSelect(.keepAwake) }
+                    )
+
+                    // Module 5: Scroll Reverser
+                    ModuleSummaryCard(
+                        icon: "computermouse.fill",
+                        tint: .teal,
+                        title: "鼠标滚轮翻转",
+                        subtitle: scrollReverserStore.statusSubtitle,
+                        statusText: moduleSettings.scrollReverserEnabled ? "已启用" : "已停用",
+                        isOn: Binding(
+                            get: { moduleSettings.scrollReverserEnabled },
+                            set: { enabled in
+                                moduleSettings.scrollReverserEnabled = enabled
+                                scrollReverserStore.syncWithModuleEnabled(enabled)
+                            }
+                        ),
+                        onOpen: { onSelect(.scrollReverser) }
                     )
                 }
             }

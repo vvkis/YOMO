@@ -51,8 +51,19 @@ let package = Package(
             ]
         ),
         .target(
+            name: "ScrollReverserModule",
+            dependencies: ["CoreKit"],
+            path: "Sources/ScrollReverserModule",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("SwiftUI"),
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("ApplicationServices")
+            ]
+        ),
+        .target(
             name: "DuoBarModule",
-            dependencies: ["CoreKit", "DisplayHiDPIModule", "KeepAwakeModule", "AudioBluetoothModule"],
+            dependencies: ["CoreKit", "DisplayHiDPIModule", "KeepAwakeModule", "AudioBluetoothModule", "ScrollReverserModule"],
             path: "Sources/DuoBarModule",
             linkerSettings: [
                 .linkedFramework("AppKit"),
@@ -66,7 +77,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "YOMO",
-            dependencies: ["CoreKit", "DuoBarModule", "DisplayHiDPIModule", "KeepAwakeModule", "AudioBluetoothModule"],
+            dependencies: ["CoreKit", "DuoBarModule", "DisplayHiDPIModule", "KeepAwakeModule", "AudioBluetoothModule", "ScrollReverserModule"],
             path: "Sources/YOMO",
             linkerSettings: [
                 .linkedFramework("AppKit"),

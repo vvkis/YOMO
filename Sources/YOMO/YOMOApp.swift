@@ -6,6 +6,7 @@ import DuoBarModule
 import DisplayHiDPIModule
 import KeepAwakeModule
 import AudioBluetoothModule
+import ScrollReverserModule
 
 @main
 struct YOMOLauncher {
@@ -45,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var displayStore: DisplayHiDPIStore!
     private var keepAwakeStore: KeepAwakeStore!
     private var audioBluetoothStore: AudioBluetoothStore!
+    private var scrollReverserStore: ScrollReverserStore!
 
     private var eventMonitor: Any?
     private var lastRenderKey: BadgeRenderKey?
@@ -57,6 +59,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         displayStore = DisplayHiDPIStore()
         keepAwakeStore = KeepAwakeStore()
         audioBluetoothStore = AudioBluetoothStore()
+        scrollReverserStore = ScrollReverserStore()
+        scrollReverserStore.syncWithModuleEnabled(moduleSettings.scrollReverserEnabled)
 
         // 1. Setup single Menu Bar Status Item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -83,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             displayStore: displayStore,
             keepAwakeStore: keepAwakeStore,
             audioBluetoothStore: audioBluetoothStore,
+            scrollReverserStore: scrollReverserStore,
             onDismiss: {
                 panelRef?.dismissAnimated()
             },
@@ -91,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onQuit: { [weak self] in
                 self?.keepAwakeStore.deactivate()
+                self?.scrollReverserStore.deactivate(persistPreference: false)
                 NSApp.terminate(nil)
             }
         )
@@ -129,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         DistributedNotificationCenter.default().removeObserver(self)
         keepAwakeStore?.deactivate()
+        scrollReverserStore?.deactivate(persistPreference: false)
     }
 
     private func setupMainMenu() {
@@ -232,6 +239,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 audioBluetoothStore.refreshAudioDevices()
                 audioBluetoothStore.refreshBluetoothDevices()
             }
+            if moduleSettings.scrollReverserEnabled {
+                scrollReverserStore.refreshPermissionState()
+            }
             button.highlight(true)
             panel.show(relativeTo: button)
             startOutsideClickMonitor()
@@ -261,7 +271,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 duoBarStore: duoBarStore,
                 displayStore: displayStore,
                 keepAwakeStore: keepAwakeStore,
-                audioBluetoothStore: audioBluetoothStore
+                audioBluetoothStore: audioBluetoothStore,
+                scrollReverserStore: scrollReverserStore
             )
             let win = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 760, height: 500),

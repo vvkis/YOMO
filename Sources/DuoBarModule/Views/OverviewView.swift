@@ -3,6 +3,7 @@ import CoreKit
 import DisplayHiDPIModule
 import KeepAwakeModule
 import AudioBluetoothModule
+import ScrollReverserModule
 
 struct OverviewView: View {
     @ObservedObject var store: DuoBarStore
@@ -11,6 +12,7 @@ struct OverviewView: View {
     @ObservedObject var displayStore: DisplayHiDPIStore
     @ObservedObject var keepAwakeStore: KeepAwakeStore
     @ObservedObject var audioBluetoothStore: AudioBluetoothStore
+    @ObservedObject var scrollReverserStore: ScrollReverserStore
     let onNavigate: (PopoverPage) -> Void
     let onOpenConsole: () -> Void
     let onQuit: () -> Void
@@ -18,6 +20,7 @@ struct OverviewView: View {
     @StateObject private var batHover = HoverTracker()
     @StateObject private var hidpiHover = HoverTracker()
     @StateObject private var awakeHover = HoverTracker()
+    @StateObject private var scrollHover = HoverTracker()
     @StateObject private var telemetryHover = HoverTracker()
 
     var body: some View {
@@ -225,7 +228,65 @@ struct OverviewView: View {
             }
             .fixedSize(horizontal: false, vertical: true)
 
-            // 2. Tactile Control Center Volume Scrubber
+            // 2. Compact Mouse Scroll Reverser Strip (1-click toggle + tap to configure)
+            if moduleSettings.scrollReverserEnabled {
+                HStack(spacing: 9) {
+                    Button {
+                        scrollReverserStore.toggle()
+                    } label: {
+                        ZStack {
+                            if scrollReverserStore.isActive {
+                                Circle()
+                                    .fill(Color.accentColor)
+                                    .frame(width: 28, height: 28)
+                            } else {
+                                GlassNeutralCircle(size: 28) { EmptyView() }
+                            }
+                            Image(systemName: scrollReverserStore.isActive ? "computermouse.fill" : "computermouse")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(scrollReverserStore.isActive ? Color.white : Color.primary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help(scrollReverserStore.isActive ? "关闭滚轮翻转" : "开启滚轮翻转")
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("鼠标滚轮翻转")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Text(scrollReverserStore.statusSubtitle)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(scrollReverserStore.isActive ? Color.accentColor : Color.primary.opacity(0.68))
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    Toggle("", isOn: Binding(
+                        get: { scrollReverserStore.isActive },
+                        set: { scrollReverserStore.setEnabled($0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .glassBentoCard(cornerRadius: 15)
+                .opacity(scrollHover.isHovering ? 0.94 : 1.0)
+                .contentShape(Rectangle())
+                .onHover { scrollHover.isHovering = $0 }
+                .onTapGesture {
+                    onNavigate(.scrollReverser)
+                }
+            }
+
+            // 3. Tactile Control Center Volume Scrubber
             if moduleSettings.audioBluetoothEnabled {
                 VStack(spacing: 6) {
                 HStack {

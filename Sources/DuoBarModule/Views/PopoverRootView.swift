@@ -3,6 +3,7 @@ import CoreKit
 import DisplayHiDPIModule
 import KeepAwakeModule
 import AudioBluetoothModule
+import ScrollReverserModule
 
 public struct PopoverRootView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -11,6 +12,7 @@ public struct PopoverRootView: View {
     @ObservedObject public var displayStore: DisplayHiDPIStore
     @ObservedObject public var keepAwakeStore: KeepAwakeStore
     @ObservedObject public var audioBluetoothStore: AudioBluetoothStore
+    @ObservedObject public var scrollReverserStore: ScrollReverserStore
     public let onDismiss: () -> Void
     public let onOpenConsole: (String?) -> Void
     public let onQuit: () -> Void
@@ -21,6 +23,7 @@ public struct PopoverRootView: View {
         displayStore: DisplayHiDPIStore,
         keepAwakeStore: KeepAwakeStore,
         audioBluetoothStore: AudioBluetoothStore,
+        scrollReverserStore: ScrollReverserStore,
         onDismiss: @escaping () -> Void,
         onOpenConsole: @escaping (String?) -> Void,
         onQuit: @escaping () -> Void
@@ -30,6 +33,7 @@ public struct PopoverRootView: View {
         self.displayStore = displayStore
         self.keepAwakeStore = keepAwakeStore
         self.audioBluetoothStore = audioBluetoothStore
+        self.scrollReverserStore = scrollReverserStore
         self.onDismiss = onDismiss
         self.onOpenConsole = onOpenConsole
         self.onQuit = onQuit
@@ -62,6 +66,7 @@ public struct PopoverRootView: View {
                         displayStore: displayStore,
                         keepAwakeStore: keepAwakeStore,
                         audioBluetoothStore: audioBluetoothStore,
+                        scrollReverserStore: scrollReverserStore,
                         onNavigate: { target in
                             withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
                                 store.navigate(to: target)
@@ -98,6 +103,10 @@ public struct PopoverRootView: View {
 
                 case .keepAwake:
                     KeepAwakePopoverView(store: keepAwakeStore, onBack: goBack)
+                        .transition(pageTransition)
+
+                case .scrollReverser:
+                    ScrollReverserPopoverView(store: scrollReverserStore, onBack: goBack)
                         .transition(pageTransition)
 
                 case .settings:

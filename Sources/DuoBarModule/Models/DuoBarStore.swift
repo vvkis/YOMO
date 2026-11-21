@@ -11,6 +11,7 @@ public enum PopoverPage: Equatable {
     case audioBluetooth
     case display
     case keepAwake
+    case scrollReverser
     case settings
 }
 
