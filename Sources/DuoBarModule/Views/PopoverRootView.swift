@@ -1,0 +1,168 @@
+import SwiftUI
+import CoreKit
+import DisplayHiDPIModule
+import KeepAwakeModule
+import AudioBluetoothModule
+
+public struct PopoverRootView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject public var store: DuoBarStore
+    @ObservedObject public var moduleSettings: ModuleSettings
+    @ObservedObject public var displayStore: DisplayHiDPIStore
+    @ObservedObject public var keepAwakeStore: KeepAwakeStore
+    @ObservedObject public var audioBluetoothStore: AudioBluetoothStore
+    public let onDismiss: () -> Void
+    public let onOpenConsole: (String?) -> Void
+    public let onQuit: () -> Void
+
+    public init(
+        store: DuoBarStore,
+        moduleSettings: ModuleSettings,
+        displayStore: DisplayHiDPIStore,
+        keepAwakeStore: KeepAwakeStore,
+        audioBluetoothStore: AudioBluetoothStore,
+        onDismiss: @escaping () -> Void,
+        onOpenConsole: @escaping (String?) -> Void,
+        onQuit: @escaping () -> Void
+    ) {
+        self.store = store
+        self.moduleSettings = moduleSettings
+        self.displayStore = displayStore
+        self.keepAwakeStore = keepAwakeStore
+        self.audioBluetoothStore = audioBluetoothStore
+        self.onDismiss = onDismiss
+        self.onOpenConsole = onOpenConsole
+        self.onQuit = onQuit
+    }
+
+    public var body: some View {
+        let isDark = (colorScheme == .dark)
+
+        ZStack(alignment: .top) {
+            // Transparent outer backdrop catcher so clicking outside the glass card dismisses cleanly
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onDismiss()
+                }
+
+            // Floating Liquid Glass Card (single unified spring curve for height morph + page transition)
+            ZStack(alignment: .top) {
+                // Absorbs clicks on empty card padding without ever intercepting child buttons/gestures
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {}
+
+                switch store.currentPage {
+                case .overview:
+                    OverviewView(
+                        store: store,
+                        prefs: store.prefs,
+                        moduleSettings: moduleSettings,
+                        displayStore: displayStore,
+                        keepAwakeStore: keepAwakeStore,
+                        audioBluetoothStore: audioBluetoothStore,
+                        onNavigate: { target in
+                            withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                                store.navigate(to: target)
+                            }
+                        },
+                        onOpenConsole: { onOpenConsole(nil) },
+                        onQuit: onQuit
+                    )
+                    .transition(pageTransition)
+
+                case .wifi:
+                    WiFiDetailView(store: store, onBack: goBack)
+                        .transition(pageTransition)
+
+                case .battery:
+                    BatteryDetailView(store: store, onBack: goBack)
+                        .transition(pageTransition)
+
+                case .telemetry:
+                    SystemTelemetryDetailView(store: store, onBack: goBack)
+                        .transition(pageTransition)
+
+                case .audioBluetooth:
+                    AudioBluetoothPopoverView(store: audioBluetoothStore, onBack: goBack)
+                        .transition(pageTransition)
+
+                case .display:
+                    DisplayHiDPIPopoverView(
+                        store: displayStore,
+                        onBack: goBack,
+                        onOpenConsole: { onOpenConsole("hidpi") }
+                    )
+                    .transition(pageTransition)
+
+                case .keepAwake:
+                    KeepAwakePopoverView(store: keepAwakeStore, onBack: goBack)
+                        .transition(pageTransition)
+
+                case .settings:
+                    SettingsDetailView(store: store, prefs: store.prefs, moduleSettings: moduleSettings, onBack: goBack)
+                        .transition(pageTransition)
+                }
+            }
+            .frame(width: 316)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(
+                LiquidGlassPanelSurface(cornerRadius: 24, isDark: isDark)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: isDark
+                                ? [Color.white.opacity(0.32), Color.white.opacity(0.10)]
+                                : [Color.white.opacity(0.85), Color.white.opacity(0.35)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        lineWidth: 0.8
+                    )
+            )
+            .shadow(
+                color: Color.black.opacity(isDark ? 0.45 : 0.22),
+                radius: 16,
+                x: 0,
+                y: 9
+            )
+            .padding(.top, 6)
+            .padding(.horizontal, 20)
+            .animation(.spring(response: 0.34, dampingFraction: 0.88), value: store.currentPage)
+            .animation(.spring(response: 0.30, dampingFraction: 0.88), value: store.showOtherNetworks)
+        }
+        .frame(width: 356, height: 600, alignment: .top)
+    }
+
+    private func goBack() {
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+            store.navigate(to: .overview)
+        }
+    }
+
+    private var pageTransition: AnyTransition {
+        if store.isGoingForward {
+            return .asymmetric(
+                insertion: .opacity
+                    .combined(with: .offset(x: 16))
+                    .combined(with: .scale(scale: 0.985)),
+                removal: .opacity
+                    .combined(with: .offset(x: -12))
+                    .combined(with: .scale(scale: 0.985))
+            )
+        } else {
+            return .asymmetric(
+                insertion: .opacity
+                    .combined(with: .offset(x: -16))
+                    .combined(with: .scale(scale: 0.985)),
+                removal: .opacity
+                    .combined(with: .offset(x: 12))
+                    .combined(with: .scale(scale: 0.985))
+            )
+        }
+    }
+}
