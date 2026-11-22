@@ -52,7 +52,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var clipboardStore: ClipboardStore!
 
     private var eventMonitor: Any?
-    private var appearanceObservation: NSKeyValueObservation?
     private var lastRenderKey: BadgeRenderKey?
     private var cancellables = Set<AnyCancellable>()
 
@@ -80,13 +79,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.action = #selector(togglePanel(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.toolTip = "YOMO — You Only Menu Once"
-
-            appearanceObservation = button.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
-                Task { @MainActor [weak self] in
-                    self?.redrawStatusBadge(force: true)
-                }
-            }
         }
+
+        // IMPORTANT: DO NOT observe `button.effectiveAppearance` via KVO.
+        // On dual-display macOS 27, MenuBarAgent repeatedly flips effectiveAppearance across displays,
+        // turning KVO -> redrawStatusBadge(force: true) into a 70%+ CPU infinite loop.
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handleSystemThemeChanged),
+            name: Notification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil
+        )
 
         // 2. Setup Borderless Native Liquid Glass Floating Panel
         var panelRef: GlassPopoverPanel?
@@ -144,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        DistributedNotificationCenter.default().removeObserver(self)
         keepAwakeStore?.deactivate()
         scrollReverserStore?.deactivate(persistPreference: false)
         clipboardStore?.stop()
@@ -179,6 +183,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(windowMenuItem)
 
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func handleSystemThemeChanged() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.redrawStatusBadge(force: true)
+        }
     }
 
     private func redrawStatusBadge(force: Bool = false) {

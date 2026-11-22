@@ -6,7 +6,7 @@ public enum StatusBadgeRenderer {
     /// Left ring occupies x: 0.4 ... 19.6 (center 10.0, radius 8.6, stroke 2.05)
     private static let ringCenterX: CGFloat = 10.0
     private static let ringRadius: CGFloat = 8.6
-    private static let capsuleTextX: CGFloat = 21.0
+    private static let capsuleTextX: CGFloat = 22.2
     private static let capsuleArrowCenterOffsetX: CGFloat = 2.0
     private static let capsuleSpeedTextOffsetX: CGFloat = 5.4
 
@@ -133,8 +133,32 @@ public enum StatusBadgeRenderer {
         let width: CGFloat = (style == .capsule) ? fixedCapsuleWidth : 20.5
         let size = NSSize(width: width, height: height)
 
-        let image = NSImage(size: size, flipped: false) { _ in
-            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+        // IMPORTANT: Pre-render into a static Retina NSBitmapImageRep.
+        // DO NOT use `NSImage(size:flipped:drawingHandler:)` — on dual-display macOS 27, MenuBarAgent
+        // continuously re-invokes custom drawingHandlers across displays and triggers a 70%+ CPU loop.
+        let scale: CGFloat = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2.0
+        let pixelW = Int(ceil(width * scale))
+        let pixelH = Int(ceil(height * scale))
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixelW,
+            pixelsHigh: pixelH,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            return NSImage(size: size)
+        }
+        rep.size = size
+
+        NSGraphicsContext.saveGraphicsState()
+        if let nsCtx = NSGraphicsContext(bitmapImageRep: rep) {
+            NSGraphicsContext.current = nsCtx
+            let ctx = nsCtx.cgContext
             ctx.setAllowsAntialiasing(true)
             ctx.setShouldAntialias(true)
             ctx.setAllowsFontSmoothing(false)
@@ -216,9 +240,11 @@ public enum StatusBadgeRenderer {
                 drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.2, startCW: 190, spanCW: 160, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
                 drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 0.96, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
             }
-            return true
         }
+        NSGraphicsContext.restoreGraphicsState()
 
+        let image = NSImage(size: size)
+        image.addRepresentation(rep)
         image.isTemplate = !semanticColor
         return image
     }
