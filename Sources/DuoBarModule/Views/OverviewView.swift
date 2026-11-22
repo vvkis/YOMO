@@ -222,10 +222,12 @@ struct OverviewView: View {
                             )
                             .zIndex(isDraggingThis ? 20 : 1)
                             .offset(x: displayX, y: displayY)
-                            .gesture(
-                                DragGesture(minimumDistance: 3, coordinateSpace: .named("BentoCanvas"))
+                            .simultaneousGesture(
+                                DragGesture(minimumDistance: isEditing ? 3 : 7, coordinateSpace: .named("BentoCanvas"))
                                     .onChanged { value in
-                                        guard isEditing else { return }
+                                        // In normal overview mode, allow direct drag-to-reorder on all tiles except volume slider;
+                                        // resizing is strictly restricted to the dedicated layout-editing mode.
+                                        guard isEditing || tile != .volume else { return }
                                         if moduleSettings.draggingOverviewTile != tile {
                                             moduleSettings.draggingOverviewTile = tile
                                             moduleSettings.dragOriginFrame = rect
@@ -243,16 +245,16 @@ struct OverviewView: View {
                                         }
                                     }
                                     .onEnded { _ in
-                                        guard isEditing else { return }
+                                        guard moduleSettings.draggingOverviewTile == tile else { return }
                                         withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.84)) {
                                             moduleSettings.draggingOverviewTile = nil
                                             moduleSettings.dragTranslation = .zero
                                         }
                                     },
-                                including: isEditing ? .all : .subviews
+                                including: isEditing ? .all : (tile == .volume ? .none : .all)
                             )
                             .contextMenu {
-                                Button(isEditing ? "完成排版" : "自定义拖拽排版") {
+                                Button(isEditing ? "完成排版" : "进入排版页面（调整组件大小）") {
                                     withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.84)) {
                                         moduleSettings.isEditingOverviewLayout.toggle()
                                         if !moduleSettings.isEditingOverviewLayout {
@@ -261,7 +263,7 @@ struct OverviewView: View {
                                         }
                                     }
                                 }
-                                if tile.canResizeSpan {
+                                if isEditing && tile.canResizeSpan {
                                     Divider()
                                     ForEach(tile.supportedColSpans, id: \.self) { optSpan in
                                         Button("\(spanLabel(optSpan))\(span == optSpan ? " ✓" : "")") {
@@ -380,6 +382,10 @@ struct OverviewView: View {
         }
     }
 
+    private func canTriggerTileTap(isEditing: Bool) -> Bool {
+        !isEditing && moduleSettings.draggingOverviewTile == nil
+    }
+
     // MARK: - Individual Bento Tile Builders (Adapt gracefully to 1x / 2x / 3x / 4x spans)
 
     @ViewBuilder
@@ -462,7 +468,7 @@ struct OverviewView: View {
         .contentShape(Rectangle())
         .onHover { wifiHover.isHovering = $0 }
         .onTapGesture {
-            if !isEditing {
+            if canTriggerTileTap(isEditing: isEditing) {
                 onNavigate(.wifi)
             }
         }
@@ -505,7 +511,7 @@ struct OverviewView: View {
         .contentShape(Rectangle())
         .onHover { audioHover.isHovering = $0 }
         .onTapGesture {
-            if !isEditing {
+            if canTriggerTileTap(isEditing: isEditing) {
                 onNavigate(.audioBluetooth)
             }
         }
@@ -567,7 +573,7 @@ struct OverviewView: View {
         .contentShape(Rectangle())
         .onHover { batHover.isHovering = $0 }
         .onTapGesture {
-            if !isEditing {
+            if canTriggerTileTap(isEditing: isEditing) {
                 onNavigate(.battery)
             }
         }
@@ -615,7 +621,7 @@ struct OverviewView: View {
         .contentShape(Rectangle())
         .onHover { hidpiHover.isHovering = $0 }
         .onTapGesture {
-            if !isEditing {
+            if canTriggerTileTap(isEditing: isEditing) {
                 onNavigate(.display)
             }
         }
@@ -669,7 +675,7 @@ struct OverviewView: View {
         .contentShape(Rectangle())
         .onHover { awakeHover.isHovering = $0 }
         .onTapGesture {
-            if !isEditing {
+            if canTriggerTileTap(isEditing: isEditing) {
                 onNavigate(.keepAwake)
             }
         }
@@ -720,7 +726,7 @@ struct OverviewView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
             .onTapGesture {
-                if !isEditing {
+                if canTriggerTileTap(isEditing: isEditing) {
                     scrollReverserStore.toggle()
                 }
             }
@@ -794,7 +800,7 @@ struct OverviewView: View {
         .contentShape(Rectangle())
         .onHover { keyLockHover.isHovering = $0 }
         .onTapGesture {
-            guard !isEditing else { return }
+            guard canTriggerTileTap(isEditing: isEditing) else { return }
             if keyboardLockStore.isLocked {
                 keyboardLockStore.unlock()
             } else if keyboardLockStore.lock() {
@@ -859,7 +865,7 @@ struct OverviewView: View {
         .contentShape(Rectangle())
         .onHover { clipHover.isHovering = $0 }
         .onTapGesture {
-            if !isEditing {
+            if canTriggerTileTap(isEditing: isEditing) {
                 onNavigate(.clipboard)
             }
         }
@@ -943,7 +949,7 @@ struct OverviewView: View {
         .contentShape(Rectangle())
         .onHover { telemetryHover.isHovering = $0 }
         .onTapGesture {
-            if !isEditing {
+            if canTriggerTileTap(isEditing: isEditing) {
                 onNavigate(.telemetry)
             }
         }
