@@ -3,37 +3,30 @@ import CoreGraphics
 import CoreKit
 
 public enum StatusBadgeRenderer {
-    private static let capsuleTextX: CGFloat = 22.2
-    private static let capsuleArrowCenterOffsetX: CGFloat = 2.1
-    private static let capsuleSpeedTextOffsetX: CGFloat = 5.8
+    /// Left ring occupies x: 0.4 ... 19.6 (center 10.0, radius 8.6, stroke 2.05)
+    private static let ringCenterX: CGFloat = 10.0
+    private static let ringRadius: CGFloat = 8.6
+    private static let capsuleTextX: CGFloat = 21.0
+    private static let capsuleArrowCenterOffsetX: CGFloat = 2.0
+    private static let capsuleSpeedTextOffsetX: CGFloat = 5.4
 
     private static let topValueFont = NSFont.monospacedDigitSystemFont(ofSize: 10.2, weight: .semibold)
     private static let topPercentFont = NSFont.systemFont(ofSize: 8.2, weight: .semibold)
     private static let bottomValueFont = NSFont.monospacedDigitSystemFont(ofSize: 9.2, weight: .medium)
     private static let bottomUnitFont = NSFont.systemFont(ofSize: 8.0, weight: .semibold)
 
-    /// Invariant width reserving worst-case bounds ("100%" / "↓ 99.9 M") so the menu bar icon never shifts horizontally.
+    /// Invariant compact width reserving 3-char speed bounds ("0.5 K" / "999 K") so left-aligned text
+    /// sits flush to the right canvas edge with zero wasted trailing gap and zero horizontal jitter.
     private static let fixedCapsuleWidth: CGFloat = {
-        let maxTop = NSMutableAttributedString(
-            string: "100",
-            attributes: [.font: topValueFont, .kern: -0.2]
-        )
-        maxTop.append(NSAttributedString(
-            string: "%",
-            attributes: [.font: topPercentFont]
-        ))
-
         let maxBot = NSMutableAttributedString(
-            string: "99.9",
-            attributes: [.font: bottomValueFont, .kern: -0.15]
+            string: "999",
+            attributes: [.font: bottomValueFont, .kern: -0.2]
         )
         maxBot.append(NSAttributedString(
             string: "\u{2009}M",
             attributes: [.font: bottomUnitFont]
         ))
-
-        let maxTextColWidth = max(maxTop.size().width, capsuleSpeedTextOffsetX + maxBot.size().width)
-        return ceil(capsuleTextX + maxTextColWidth)
+        return ceil(capsuleTextX + capsuleSpeedTextOffsetX + maxBot.size().width)
     }()
 
     public static func render(
@@ -101,7 +94,6 @@ public enum StatusBadgeRenderer {
             return .systemBlue
         }()
 
-        // Build left-aligned attributed strings rendered inside the invariant fixedCapsuleWidth slot
         let numStr = String(format: "%.0f", topPct)
         let topAttr = NSMutableAttributedString(
             string: numStr,
@@ -127,7 +119,7 @@ public enum StatusBadgeRenderer {
             attributes: [
                 .font: bottomValueFont,
                 .foregroundColor: subFg,
-                .kern: -0.15
+                .kern: -0.2
             ]
         )
         botAttr.append(NSAttributedString(
@@ -138,7 +130,7 @@ public enum StatusBadgeRenderer {
             ]
         ))
 
-        let width: CGFloat = (style == .capsule) ? fixedCapsuleWidth : 22.0
+        let width: CGFloat = (style == .capsule) ? fixedCapsuleWidth : 20.5
         let size = NSSize(width: width, height: height)
 
         let image = NSImage(size: size, flipped: false) { _ in
@@ -153,13 +145,12 @@ public enum StatusBadgeRenderer {
             switch style {
             case .capsule:
                 if showBatteryPercentInRing {
-                    let center = CGPoint(x: 10.5, y: 11.8)
-                    let radius: CGFloat = 8.9
+                    let center = CGPoint(x: ringCenterX, y: 11.8)
                     drawOpenTopBatteryRing(
                         ctx: ctx,
                         center: center,
-                        radius: radius,
-                        lineWidth: 2.1,
+                        radius: ringRadius,
+                        lineWidth: 2.05,
                         percentage: battery.percentage,
                         track: trackColor,
                         ringColor: batColor,
@@ -167,28 +158,26 @@ public enum StatusBadgeRenderer {
                     )
                     drawWiFiGlyph(
                         ctx: ctx,
-                        center: CGPoint(x: center.x, y: center.y - 0.95),
-                        scale: 0.85,
+                        center: CGPoint(x: center.x, y: center.y - 0.9),
+                        scale: 0.83,
                         signalBars: wifi.signalBars,
                         poweredOn: wifi.isPoweredOn,
                         color: fg
                     )
                 } else {
-                    let center = CGPoint(x: 10.5, y: 12.0)
-                    let radius: CGFloat = 8.9
-                    drawFullRing(ctx: ctx, center: center, radius: radius, lineWidth: 2.25, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
-                    drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.35), scale: 0.96, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                    let center = CGPoint(x: ringCenterX, y: 12.0)
+                    drawFullRing(ctx: ctx, center: center, radius: ringRadius, lineWidth: 2.15, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
+                    drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.35), scale: 0.93, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
                     if battery.isCharging && semanticColor {
-                        drawChargingDot(ctx: ctx, center: CGPoint(x: center.x, y: center.y + radius), color: batColor, borderColor: isDarkMenuBar ? .black : .white)
+                        drawChargingDot(ctx: ctx, center: CGPoint(x: center.x, y: center.y + ringRadius), color: batColor, borderColor: isDarkMenuBar ? .black : .white)
                     }
                 }
 
-                // Tightly group the 2 rows so their total visual height matches the 18pt left ring
+                // Clean left-aligned two-line stack inside compact 3-char width slot
                 let topDrawY: CGFloat = 11.4
                 let botDrawY: CGFloat = 2.1
                 topAttr.draw(at: NSPoint(x: capsuleTextX, y: topDrawY))
 
-                // Optical center of bottom row capHeight so the arrow aligns with "0.5 K"
                 let botBaselineY = botDrawY - bottomValueFont.descender
                 let arrowCenterY = botBaselineY + (bottomValueFont.capHeight * 0.5)
                 drawMicroArrow(
@@ -200,9 +189,9 @@ public enum StatusBadgeRenderer {
                 botAttr.draw(at: NSPoint(x: capsuleTextX + capsuleSpeedTextOffsetX, y: botDrawY))
 
             case .dualRing:
-                let center = CGPoint(x: 11.0, y: 12.0)
-                drawFullRing(ctx: ctx, center: center, radius: 9.3, lineWidth: 2.15, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
-                drawFullRing(ctx: ctx, center: center, radius: 6.5, lineWidth: 1.55, progress: cpu.totalUsage / 100.0, track: trackColor.withAlphaComponent(0.18), color: cpuColor)
+                let center = CGPoint(x: 10.25, y: 12.0)
+                drawFullRing(ctx: ctx, center: center, radius: 9.1, lineWidth: 2.1, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
+                drawFullRing(ctx: ctx, center: center, radius: 6.4, lineWidth: 1.5, progress: cpu.totalUsage / 100.0, track: trackColor.withAlphaComponent(0.18), color: cpuColor)
                 let numText = String(format: "%.0f", topPct)
                 let font = NSFont.monospacedDigitSystemFont(ofSize: 7.4, weight: .semibold)
                 let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: fg]
@@ -213,19 +202,19 @@ public enum StatusBadgeRenderer {
                 )
 
             case .triArc:
-                let center = CGPoint(x: 11.0, y: 12.0)
-                let radius: CGFloat = 9.2
-                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.25, startCW: 8, spanCW: 104, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
-                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.25, startCW: 128, spanCW: 104, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
-                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.25, startCW: 248, spanCW: 104, progress: cpu.totalUsage / 100.0, track: trackColor, color: cpuColor)
-                drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 0.96, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                let center = CGPoint(x: 10.25, y: 12.0)
+                let radius: CGFloat = 9.0
+                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.2, startCW: 8, spanCW: 104, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
+                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.2, startCW: 128, spanCW: 104, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
+                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.2, startCW: 248, spanCW: 104, progress: cpu.totalUsage / 100.0, track: trackColor, color: cpuColor)
+                drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 0.94, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
 
             case .splitArc:
-                let center = CGPoint(x: 11.0, y: 12.0)
-                let radius: CGFloat = 9.2
-                drawBottomUpRightArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.25, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
-                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.25, startCW: 190, spanCW: 160, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
-                drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 0.98, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                let center = CGPoint(x: 10.25, y: 12.0)
+                let radius: CGFloat = 9.0
+                drawBottomUpRightArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.2, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
+                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.2, startCW: 190, spanCW: 160, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
+                drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 0.96, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
             }
             return true
         }
@@ -323,7 +312,6 @@ public enum StatusBadgeRenderer {
         let attrStr = NSAttributedString(string: pctText, attributes: attrs)
         let textSize = attrStr.size()
 
-        // Tight angular gap sized to actual inked width + round-cap clearance
         let halfChord = (textSize.width / 2.0) + (lineWidth * 0.5) + 0.75
         let sinVal = min(0.76, max(0.30, halfChord / radius))
         let gapHalfDeg = Double(asin(sinVal)) * 180.0 / .pi
@@ -341,7 +329,6 @@ public enum StatusBadgeRenderer {
             color: ringColor
         )
 
-        // Nestle digits cleanly along the upper chord between the two arc endpoints (tucked 0.35pt inward to follow ring curvature)
         let arcEndY = center.y + radius * CGFloat(cos(gapHalfDeg * .pi / 180.0))
         let targetMidY = (arcEndY * 0.65) + ((center.y + radius) * 0.35)
         let textX = center.x - textSize.width / 2.0

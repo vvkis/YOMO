@@ -236,7 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         button.image = image
-        let targetLength = image.size.width + 6.0
+        let targetLength = image.size.width
         if abs(statusItem.length - targetLength) > 0.1 {
             statusItem.length = targetLength
         }

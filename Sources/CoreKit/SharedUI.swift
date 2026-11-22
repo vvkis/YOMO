@@ -356,15 +356,15 @@ public enum Formatters {
     public static func splitSpeed(_ bytesPerSec: Double) -> (value: String, unit: String) {
         let kb = max(0, bytesPerSec) / 1024.0
         if kb < 999.5 {
-            let num = kb >= 100.0 ? String(format: "%.0f", kb) : String(format: "%.1f", kb)
+            let num = kb >= 9.95 ? String(format: "%.0f", kb) : String(format: "%.1f", kb)
             return (num, "K")
         } else if kb < 999.5 * 1024.0 {
             let mb = kb / 1024.0
-            let num = mb >= 100.0 ? String(format: "%.0f", mb) : String(format: "%.1f", mb)
+            let num = mb >= 9.95 ? String(format: "%.0f", mb) : String(format: "%.1f", mb)
             return (num, "M")
         } else {
             let gb = kb / (1024.0 * 1024.0)
-            let num = gb >= 100.0 ? String(format: "%.0f", gb) : String(format: "%.1f", gb)
+            let num = gb >= 9.95 ? String(format: "%.0f", gb) : String(format: "%.1f", gb)
             return (num, "G")
         }
     }
