@@ -630,187 +630,202 @@ public struct ClipboardConsoleView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .center) {
-                    Text("本地轻量剪贴板历史，支持文本与图片预览、置顶与搜索；自动遵循密码管理器隐私标记，绝不记录密码类敏感剪贴板内容。")
-                        .font(.callout)
+        ConsolePageContainer(
+            title: "剪贴板",
+            subtitle: "本地轻量历史剪贴板，支持图片离线 Vision OCR 与二维码识别；自动过滤密码管理器敏感内容。",
+            trailing: {
+                HStack(spacing: 8) {
+                    Text("启用模块")
+                        .font(.system(size: 12.5))
                         .foregroundStyle(.secondary)
-                    Spacer()
-                    Toggle("启用模块", isOn: Binding(
+                    ConsoleSwitch(isOn: Binding(
                         get: { moduleSettings.clipboardEnabled },
                         set: { enabled in
                             moduleSettings.clipboardEnabled = enabled
                             store.syncWithModuleEnabled(enabled)
                         }
                     ))
-                    .toggleStyle(.switch)
                 }
-
-                GroupBox("记录与快捷键设置") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("最多保留条数（不含置顶）")
-                            Spacer()
-                            Picker("", selection: $store.maxHistoryCount) {
-                                Text("30 条").tag(30)
-                                Text("50 条").tag(50)
-                                Text("100 条").tag(100)
-                            }
-                            .pickerStyle(.segmented)
-                            .frame(width: 210)
-                            .labelsHidden()
-                        }
-
-                        Toggle("记录复制的图片与截图（本地最多保留最近 10 张）", isOn: $store.saveImages)
-                            .toggleStyle(.switch)
-
-                        Toggle("全局快捷键 ⇧⌘V 快速唤出历史剪贴板", isOn: $store.globalHotkeyEnabled)
-                            .toggleStyle(.switch)
-
-                        HStack {
-                            Toggle("点击条目后自动粘贴到当前应用（需辅助功能权限）", isOn: $store.autoPasteEnabled)
-                                .toggleStyle(.switch)
-                            if store.autoPasteEnabled && !store.hasAccessibilityForAutoPaste {
-                                Button("授权辅助功能") {
-                                    store.openAccessibilitySettings()
-                                }
-                                .controlSize(.small)
-                            }
-                        }
-
-                        Divider()
-
-                        Toggle("自动清理过期记录（保留已置顶条目）", isOn: $store.autoCleanupEnabled)
-                            .toggleStyle(.switch)
-
-                        if store.autoCleanupEnabled {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(spacing: 8) {
-                                    Text("保留时长")
-                                        .foregroundStyle(.secondary)
-
-                                    HStack(spacing: 4) {
-                                        ForEach([1, 6, 12, 24, 72], id: \.self) { preset in
-                                            let isSelected = (store.autoCleanupHours == preset)
-                                            Button("\(preset)h") {
-                                                store.autoCleanupHours = preset
-                                            }
-                                            .buttonStyle(.plain)
-                                            .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-                                            .foregroundStyle(isSelected ? Color.white : Color.primary)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 3.5)
-                                            .background(
-                                                Capsule()
-                                                    .fill(isSelected ? Color.accentColor : Color.primary.opacity(0.08))
-                                            )
-                                        }
-                                    }
-
-                                    Spacer()
-
-                                    TextField("", value: $store.autoCleanupHours, format: .number)
-                                        .textFieldStyle(.roundedBorder)
-                                        .monospacedDigit()
-                                        .multilineTextAlignment(.trailing)
-                                        .frame(width: 58)
-
-                                    Text("小时")
-                                        .foregroundStyle(.secondary)
-
-                                    Stepper(
-                                        "",
-                                        value: $store.autoCleanupHours,
-                                        in: ClipboardStore.minAutoCleanupHours...ClipboardStore.maxAutoCleanupHours
-                                    )
-                                    .labelsHidden()
-                                }
-
-                                Text("超过 \(store.autoCleanupHours) 小时的未置顶文本与图片将自动从本地缓存清除（支持自定义 1–720 小时）。")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.leading, 4)
-                        }
-
-                        Divider()
-
-                        HStack {
-                            Text("当前已保存 \(store.totalCount) 条记录（仅保存在本机，权限 0600）")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("缓存目录") {
-                                store.openStorageFolder()
-                            }
-                            Button("清空未置顶") {
-                                store.clearUnpinned()
-                            }
-                            .disabled(!store.hasUnpinnedItems)
-                            Button("全部清空", role: .destructive) {
-                                store.clearAll()
-                            }
-                            .disabled(store.entries.isEmpty)
-                        }
+            }
+        ) {
+            // Card 1: Capture & Shortcuts
+            ConsoleCard("记录与快捷键") {
+                ConsoleRow(
+                    title: "最多保留条数",
+                    subtitle: "不含已置顶的常用收藏条目"
+                ) {
+                    Picker("", selection: $store.maxHistoryCount) {
+                        Text("30 条").tag(30)
+                        Text("50 条").tag(50)
+                        Text("100 条").tag(100)
                     }
-                    .padding(6)
+                    .pickerStyle(.segmented)
+                    .frame(width: 195)
+                    .labelsHidden()
                 }
 
-                GroupBox("最近记录") {
-                    VStack(spacing: 6) {
-                        if let ocrResult = store.activeOCRResult {
-                            ClipboardOCRResultPanel(
-                                result: ocrResult,
-                                thumbnail: store.entry(for: ocrResult.entryID).flatMap { store.thumbnail(for: $0) },
-                                mergeLines: $store.ocrMergeLines,
-                                toastMessage: store.ocrToastMessage,
-                                onCopyText: { text in
-                                    store.copyOCRText(text)
-                                },
-                                onOpenURL: { urlString in
-                                    store.openBarcodeURL(urlString)
-                                },
-                                onClose: {
-                                    store.dismissOCRResult()
+                ConsoleRowDivider()
+
+                ConsoleRow(
+                    title: "记录复制的图片与截图",
+                    subtitle: "支持离线文字提取与二维码解析，本地最多保留最近 10 张未置顶图片"
+                ) {
+                    ConsoleSwitch(isOn: $store.saveImages)
+                }
+
+                ConsoleRowDivider()
+
+                ConsoleRow(
+                    title: "全局快捷键唤出",
+                    subtitle: "任意应用中按下 ⇧⌘V 立即弹出历史剪贴板"
+                ) {
+                    ConsoleSwitch(isOn: $store.globalHotkeyEnabled)
+                }
+
+                ConsoleRowDivider()
+
+                ConsoleRow(
+                    title: "点击条目后自动粘贴",
+                    subtitle: "将选中内容写回剪贴板并自动向当前应用发送 ⌘V（需辅助功能权限）"
+                ) {
+                    HStack(spacing: 10) {
+                        if store.autoPasteEnabled && !store.hasAccessibilityForAutoPaste {
+                            ConsoleActionButton("去授权") {
+                                store.openAccessibilitySettings()
+                            }
+                        }
+                        ConsoleSwitch(isOn: $store.autoPasteEnabled)
+                    }
+                }
+            }
+
+            // Card 2: Auto-Cleanup & Local Storage
+            ConsoleCard("自动清理与本地缓存") {
+                ConsoleRow(
+                    title: "自动清理过期记录",
+                    subtitle: "超过设定小时数的未置顶文本与图片将自动清除（保留已置顶条目）"
+                ) {
+                    ConsoleSwitch(isOn: $store.autoCleanupEnabled)
+                }
+
+                if store.autoCleanupEnabled {
+                    ConsoleRowDivider()
+
+                    HStack(spacing: 10) {
+                        Text("保留时长")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 5) {
+                            ForEach([1, 6, 12, 24, 72], id: \.self) { preset in
+                                let isSelected = (store.autoCleanupHours == preset)
+                                Button("\(preset)h") {
+                                    store.autoCleanupHours = preset
                                 }
-                            )
-                        } else if store.entries.isEmpty {
-                            Text("暂无剪贴板历史记录")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(6)
-                        } else {
-                            ForEach(store.entries.prefix(15)) { item in
-                                ClipboardEntryRow(
-                                    entry: item,
-                                    thumbnail: store.thumbnail(for: item),
-                                    sourceIcon: store.sourceIcon(for: item),
-                                    relativeTime: store.relativeTimeText(for: item.createdAt),
-                                    isScanningOCR: store.ocrScanningEntryID == item.id,
-                                    onSelect: {
-                                        store.copyEntry(item, triggerAutoPaste: false)
-                                    },
-                                    onOCR: item.kind == .image ? {
-                                        store.recognizeEntry(item)
-                                    } : nil,
-                                    onTogglePin: {
-                                        store.togglePin(item)
-                                    },
-                                    onDelete: {
-                                        store.deleteEntry(item)
-                                    }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 11.5, weight: isSelected ? .semibold : .regular))
+                                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill(isSelected ? ConsoleTheme.accent : Color.primary.opacity(0.06))
                                 )
                             }
                         }
+
+                        Spacer()
+
+                        TextField("", value: $store.autoCleanupHours, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .monospacedDigit()
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 56)
+
+                        Text("小时")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+
+                        Stepper(
+                            "",
+                            value: $store.autoCleanupHours,
+                            in: ClipboardStore.minAutoCleanupHours...ClipboardStore.maxAutoCleanupHours
+                        )
+                        .labelsHidden()
                     }
-                    .padding(4)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                }
+
+                ConsoleRowDivider()
+
+                ConsoleRow(
+                    title: "本机私有存储（权限 0600）",
+                    subtitle: "当前共保存 \(store.totalCount) 条记录，仅存储在本机 Application Support 目录"
+                ) {
+                    HStack(spacing: 8) {
+                        ConsoleActionButton("打开目录") {
+                            store.openStorageFolder()
+                        }
+                        ConsoleActionButton("清空未置顶", disabled: !store.hasUnpinnedItems) {
+                            store.clearUnpinned()
+                        }
+                        ConsoleActionButton("全部清空", variant: .destructive, disabled: store.entries.isEmpty) {
+                            store.clearAll()
+                        }
+                    }
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 10)
-            .padding(.bottom, 24)
+
+            // Card 3: Recent History & Inline OCR
+            ConsoleCard("最近记录") {
+                VStack(spacing: 4) {
+                    if let ocrResult = store.activeOCRResult {
+                        ClipboardOCRResultPanel(
+                            result: ocrResult,
+                            thumbnail: store.entry(for: ocrResult.entryID).flatMap { store.thumbnail(for: $0) },
+                            mergeLines: $store.ocrMergeLines,
+                            toastMessage: store.ocrToastMessage,
+                            onCopyText: { text in
+                                store.copyOCRText(text)
+                            },
+                            onOpenURL: { urlString in
+                                store.openBarcodeURL(urlString)
+                            },
+                            onClose: {
+                                store.dismissOCRResult()
+                            }
+                        )
+                    } else if store.entries.isEmpty {
+                        ConsoleRow(title: "暂无剪贴板历史记录", subtitle: "复制任意文本或截图后将自动出现在这里") {
+                            EmptyView()
+                        }
+                    } else {
+                        ForEach(store.entries.prefix(15)) { item in
+                            ClipboardEntryRow(
+                                entry: item,
+                                thumbnail: store.thumbnail(for: item),
+                                sourceIcon: store.sourceIcon(for: item),
+                                relativeTime: store.relativeTimeText(for: item.createdAt),
+                                isScanningOCR: store.ocrScanningEntryID == item.id,
+                                onSelect: {
+                                    store.copyEntry(item, triggerAutoPaste: false)
+                                },
+                                onOCR: item.kind == .image ? {
+                                    store.recognizeEntry(item)
+                                } : nil,
+                                onTogglePin: {
+                                    store.togglePin(item)
+                                },
+                                onDelete: {
+                                    store.deleteEntry(item)
+                                }
+                            )
+                        }
+                    }
+                }
+                .padding(10)
+            }
         }
         .onAppear {
             store.setUIActive(true)

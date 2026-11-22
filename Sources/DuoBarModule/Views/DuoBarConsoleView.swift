@@ -11,63 +11,84 @@ public struct DuoBarConsoleView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("灵感源自 iPhone Duo 的紧凑状态聚合，单枚图标融合电量、Wi-Fi、存储水位与实时网速。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-
-                GroupBox("菜单栏外观与指标") {
-                    VStack(alignment: .leading, spacing: 14) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("图标样式")
-                                .font(.caption.bold())
-                                .foregroundStyle(.secondary)
-                            Picker("", selection: Binding(
-                                get: { prefs.badgeStyle },
-                                set: { prefs.badgeStyle = $0 }
-                            )) {
-                                ForEach(BadgeStyle.allCases) { style in
-                                    Text(style.title).tag(style)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                        }
-
-                        Toggle("语义配色（充电绿 / 低电红 / 正常水位纯净白）", isOn: $prefs.semanticColor)
-                            .toggleStyle(.switch)
-
-                        if prefs.badgeStyle == .capsule {
-                            Toggle("电量环顶部断开显示百分比数字（iPhone Duo 风格）", isOn: $prefs.showBatteryPercentInRing)
-                                .toggleStyle(.switch)
-                        }
-
-                        HStack {
-                            Text("采样刷新间隔")
-                            Spacer()
-                            Picker("", selection: $prefs.refreshInterval) {
-                                Text("1 秒").tag(1.0)
-                                Text("2 秒").tag(2.0)
-                                Text("3 秒").tag(3.0)
-                            }
-                            .pickerStyle(.segmented)
-                            .frame(width: 180)
-                            .labelsHidden()
-                        }
-
-                        Toggle("开机自动启动 YOMO", isOn: Binding(
-                            get: { store.launchAtLogin },
-                            set: { store.setLaunchAtLogin($0) }
-                        ))
-                        .toggleStyle(.switch)
+        ConsolePageContainer(
+            title: "状态栏",
+            subtitle: "单枚紧凑图标聚合电量、Wi-Fi、内存水位与实时网速，双屏静态预渲染零空转。"
+        ) {
+            // Card 1: Radio-style Badge Style Selector (WeChat Input top card aesthetic)
+            ConsoleCard("图标样式") {
+                ForEach(Array(BadgeStyle.allCases.enumerated()), id: \.element.id) { idx, style in
+                    if idx > 0 {
+                        ConsoleRowDivider()
                     }
-                    .padding(8)
+                    ConsoleRadioRow(
+                        title: style.title,
+                        subtitle: styleDescription(style),
+                        isSelected: prefs.badgeStyle == style
+                    ) {
+                        prefs.badgeStyle = style
+                    }
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 10)
-            .padding(.bottom, 24)
+
+            // Card 2: Appearance & Visual Details
+            ConsoleCard("显示细节") {
+                ConsoleRow(
+                    title: "语义配色",
+                    subtitle: "充电与健康电量显绿、低电量警示红橙，正常水位保持纯净前景色"
+                ) {
+                    ConsoleSwitch(isOn: $prefs.semanticColor)
+                }
+
+                if prefs.badgeStyle == .capsule {
+                    ConsoleRowDivider()
+
+                    ConsoleRow(
+                        title: "电量环顶部断开显示百分比",
+                        subtitle: "iPhone Duo 风格：在圆环 12 点位置嵌入等宽窄体电量数字"
+                    ) {
+                        ConsoleSwitch(isOn: $prefs.showBatteryPercentInRing)
+                    }
+                }
+            }
+
+            // Card 3: Refresh & Startup
+            ConsoleCard("采样与启动") {
+                ConsoleRow(
+                    title: "状态栏采样间隔",
+                    subtitle: "仅更新轻量内核计数器，息屏休眠时自动暂停采样"
+                ) {
+                    Picker("", selection: $prefs.refreshInterval) {
+                        Text("1 秒").tag(1.0)
+                        Text("2 秒").tag(2.0)
+                        Text("3 秒").tag(3.0)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 170)
+                    .labelsHidden()
+                }
+
+                ConsoleRowDivider()
+
+                ConsoleRow(
+                    title: "开机自动启动 YOMO",
+                    subtitle: "登录后自动常驻菜单栏，随时一键呼出工具面板"
+                ) {
+                    ConsoleSwitch(isOn: Binding(
+                        get: { store.launchAtLogin },
+                        set: { store.setLaunchAtLogin($0) }
+                    ))
+                }
+            }
+        }
+    }
+
+    private func styleDescription(_ style: BadgeStyle) -> String {
+        switch style {
+        case .capsule: return "左侧电量 Wi-Fi 圆环 + 右侧双行内存与实时网速（推荐）"
+        case .dualRing: return "外环电量、内环 CPU，中心直读内存百分比"
+        case .triArc: return "三段弧线分别映射电量、内存与 CPU，中心显示 Wi-Fi"
+        case .splitArc: return "左右双弧对比电量与内存，中心显示 Wi-Fi"
         }
     }
 }

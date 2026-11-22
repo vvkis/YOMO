@@ -128,59 +128,54 @@ public struct KeepAwakeConsoleView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .center) {
-                    Text("基于 IOKit 原生电源断言阻止屏幕息屏与系统自动休眠，关闭即释放。")
-                        .font(.callout)
+        ConsolePageContainer(
+            title: "防休眠",
+            subtitle: "基于 IOKit 原生内核超时断言阻止屏幕息屏与系统休眠，关闭或超时即自动释放。",
+            trailing: {
+                HStack(spacing: 8) {
+                    Text("启用模块")
+                        .font(.system(size: 12.5))
                         .foregroundStyle(.secondary)
-                    Spacer()
-                    Toggle("启用模块", isOn: Binding(
+                    ConsoleSwitch(isOn: Binding(
                         get: { moduleSettings.keepAwakeEnabled },
                         set: { enabled in
                             moduleSettings.keepAwakeEnabled = enabled
                             if !enabled { store.deactivate() }
                         }
                     ))
-                    .toggleStyle(.switch)
-                }
-
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack {
-                            Label(store.isActive ? "防休眠已开启" : "防休眠未开启", systemImage: store.isActive ? "cup.and.saucer.fill" : "cup.and.saucer")
-                                .font(.headline)
-                                .foregroundStyle(store.isActive ? .orange : .primary)
-                            Spacer()
-                            Text(store.statusSubtitle)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                            Button(store.isActive ? "立即关闭" : "立即开启") {
-                                store.toggle()
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(store.isActive ? .secondary : .orange)
-                        }
-
-                        Divider()
-
-                        HStack(spacing: 8) {
-                            ForEach(KeepAwakeDuration.allCases) { d in
-                                Button(d.label) {
-                                    store.activate(duration: d)
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(store.isActive && store.selectedDuration == d ? .orange : .secondary)
-                            }
-                        }
-                    }
-                    .padding(6)
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 10)
-            .padding(.bottom, 24)
+        ) {
+            ConsoleCard("当前状态") {
+                ConsoleRow(
+                    title: store.isActive ? "防休眠运行中" : "防休眠未开启",
+                    subtitle: store.statusSubtitle
+                ) {
+                    ConsoleActionButton(
+                        store.isActive ? "立即关闭" : "立即开启",
+                        variant: store.isActive ? .standard : .prominent,
+                        disabled: !moduleSettings.keepAwakeEnabled
+                    ) {
+                        store.toggle()
+                    }
+                }
+            }
+
+            ConsoleCard("持续时长") {
+                ForEach(Array(KeepAwakeDuration.allCases.enumerated()), id: \.element.id) { idx, duration in
+                    if idx > 0 {
+                        ConsoleRowDivider()
+                    }
+                    ConsoleRadioRow(
+                        title: duration.label,
+                        subtitle: duration == .indefinite ? "保持常亮直到手动关闭或退出 YOMO" : "到期后内核自动回收断言并恢复系统节能",
+                        isSelected: store.isActive && store.selectedDuration == duration
+                    ) {
+                        guard moduleSettings.keepAwakeEnabled else { return }
+                        store.activate(duration: duration)
+                    }
+                }
+            }
         }
     }
 }

@@ -355,85 +355,73 @@ public struct AudioBluetoothConsoleView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .center) {
-                    Text("原生读取 AirPods 左右耳与充电盒真实电量，支持一键连接/断开、音频路由切换及切回内建麦防通话降质。")
-                        .font(.callout)
+        ConsolePageContainer(
+            title: "蓝牙与音频",
+            subtitle: "原生读取 AirPods 左右耳与充电盒真实电量，支持一键连接/断开、路由切换与切回内建麦防降质。",
+            trailing: {
+                HStack(spacing: 8) {
+                    Text("在菜单栏显示")
+                        .font(.system(size: 12.5))
                         .foregroundStyle(.secondary)
-                    Spacer()
-                    Toggle("在菜单栏显示", isOn: $moduleSettings.audioBluetoothEnabled)
-                        .toggleStyle(.switch)
-                }
-
-                if let msg = store.statusMessage {
-                    HStack(spacing: 8) {
-                        Image(systemName: "info.circle.fill")
-                            .foregroundStyle(Color.accentColor)
-                        Text(msg)
-                            .font(.callout)
-                        Spacer()
-                    }
-                    .padding(10)
-                    .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
-                }
-
-                GroupBox("AirPods 与蓝牙外设") {
-                    VStack(spacing: 6) {
-                        if store.bluetoothDevices.isEmpty {
-                            Text("暂未发现配对的蓝牙音频或外设")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(6)
-                        } else {
-                            ForEach(store.bluetoothDevices) { dev in
-                                BluetoothDeviceRow(device: dev, isBusy: store.busyDeviceAddress == dev.address) {
-                                    store.toggleBluetoothConnection(dev)
-                                }
-                            }
-                        }
-                    }
-                    .padding(4)
-                }
-
-                GroupBox("音频输入 / 输出设备") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("输出设备")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                        ForEach(store.outputDevices) { dev in
-                            AudioOutputRow(device: dev) {
-                                store.selectOutputDevice(dev)
-                            }
-                        }
-
-                        Divider()
-
-                        HStack {
-                            Text("输入设备（麦克风）")
-                                .font(.caption.bold())
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            if let cur = store.currentInputDevice, !cur.isBuiltin, store.builtinInputDevice != nil {
-                                Button("切回 Mac 内建麦克风（保高清音质）") {
-                                    store.switchToBuiltinMic()
-                                }
-                                .controlSize(.small)
-                            }
-                        }
-                        ForEach(store.inputDevices) { dev in
-                            AudioOutputRow(device: dev) {
-                                store.selectInputDevice(dev)
-                            }
-                        }
-                    }
-                    .padding(6)
+                    ConsoleSwitch(isOn: $moduleSettings.audioBluetoothEnabled)
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 10)
-            .padding(.bottom, 24)
+        ) {
+            if let msg = store.statusMessage {
+                ConsoleBanner(icon: "info.circle.fill", tint: ConsoleTheme.accent, title: msg)
+            }
+
+            ConsoleCard("AirPods 与蓝牙外设") {
+                if store.bluetoothDevices.isEmpty {
+                    ConsoleRow(title: "暂未发现配对的蓝牙音频或外设", subtitle: "在系统蓝牙配对 AirPods 或耳机后将自动显示") {
+                        ConsoleActionButton("刷新") {
+                            store.refreshBluetoothDevices()
+                        }
+                    }
+                } else {
+                    VStack(spacing: 4) {
+                        ForEach(store.bluetoothDevices) { dev in
+                            BluetoothDeviceRow(device: dev, isBusy: store.busyDeviceAddress == dev.address) {
+                                store.toggleBluetoothConnection(dev)
+                            }
+                        }
+                    }
+                    .padding(10)
+                }
+            }
+
+            ConsoleCard("音频输出设备") {
+                VStack(spacing: 4) {
+                    ForEach(store.outputDevices) { dev in
+                        AudioOutputRow(device: dev) {
+                            store.selectOutputDevice(dev)
+                        }
+                    }
+                }
+                .padding(10)
+            }
+
+            ConsoleCard("音频输入设备（麦克风）") {
+                if let cur = store.currentInputDevice, !cur.isBuiltin, store.builtinInputDevice != nil {
+                    ConsoleRow(
+                        title: "防止蓝牙通话降质",
+                        subtitle: "当前正在使用蓝牙麦克风，切回 Mac 内建麦可立刻恢复高清立体声输出"
+                    ) {
+                        ConsoleActionButton("切回内建麦", variant: .prominent) {
+                            store.switchToBuiltinMic()
+                        }
+                    }
+                    ConsoleRowDivider()
+                }
+                VStack(spacing: 4) {
+                    ForEach(store.inputDevices) { dev in
+                        AudioOutputRow(device: dev) {
+                            store.selectInputDevice(dev)
+                        }
+                    }
+                }
+                .padding(10)
+            }
         }
         .onAppear {
             store.refreshAudioDevices()

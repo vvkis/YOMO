@@ -343,17 +343,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 keyboardLockStore: keyboardLockStore
             )
             let win = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 760, height: 500),
+                contentRect: NSRect(x: 0, y: 0, width: 820, height: 560),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
-            let toolbar = NSToolbar(identifier: "YOMOConsoleToolbar")
-            toolbar.displayMode = .iconOnly
-            win.toolbar = toolbar
-            win.toolbarStyle = .unified
+            win.titleVisibility = .hidden
             win.titlebarAppearsTransparent = true
             win.titlebarSeparatorStyle = .none
+            win.isMovableByWindowBackground = true
+            win.minSize = NSSize(width: 720, height: 480)
             win.title = "YOMO 控制台"
             win.isReleasedWhenClosed = false
             win.contentViewController = NSHostingController(rootView: contentView)
