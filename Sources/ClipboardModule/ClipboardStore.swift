@@ -154,7 +154,12 @@ public final class ClipboardStore: ObservableObject {
         static let saveImages = "clipboard.saveImages"
         static let globalHotkeyEnabled = "clipboard.globalHotkeyEnabled"
         static let autoPasteEnabled = "clipboard.autoPasteEnabled"
+        static let autoCleanupEnabled = "clipboard.autoCleanupEnabled"
+        static let autoCleanupHours = "clipboard.autoCleanupHours"
     }
+
+    public static let minAutoCleanupHours = 1
+    public static let maxAutoCleanupHours = 720 // 30 days
 
     /// Standard nspasteboard.org & password-manager markers that must NEVER be recorded
     private static let ignoredPasteboardTypes: Set<String> = [
@@ -211,12 +216,36 @@ public final class ClipboardStore: ObservableObject {
         }
     }
 
+    @Published public var autoCleanupEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(autoCleanupEnabled, forKey: Keys.autoCleanupEnabled)
+            if autoCleanupEnabled {
+                trimAndPersist()
+            }
+        }
+    }
+
+    @Published public var autoCleanupHours: Int {
+        didSet {
+            let clamped = min(max(autoCleanupHours, Self.minAutoCleanupHours), Self.maxAutoCleanupHours)
+            if clamped != autoCleanupHours {
+                autoCleanupHours = clamped
+                return
+            }
+            UserDefaults.standard.set(clamped, forKey: Keys.autoCleanupHours)
+            if autoCleanupEnabled {
+                trimAndPersist()
+            }
+        }
+    }
+
     /// Invoked when the user presses the global ⇧⌘V shortcut anywhere on macOS
     public var onGlobalHotKeyPressed: (() -> Void)?
 
     /// Internal snapshot updated even when UI is hidden (zero SwiftUI diffs while idle)
     private var latestEntries: [ClipboardEntry] = []
     private var lastChangeCount: Int = NSPasteboard.general.changeCount
+    private var lastAutoCleanupCheckAt: Date = Date()
     private var timer: Timer?
     private var isModuleEnabled: Bool = true
     private var isUIActive: Bool = false
@@ -238,6 +267,9 @@ public final class ClipboardStore: ObservableObject {
         self.saveImages = ud.object(forKey: Keys.saveImages) as? Bool ?? true
         self.globalHotkeyEnabled = ud.object(forKey: Keys.globalHotkeyEnabled) as? Bool ?? true
         self.autoPasteEnabled = ud.object(forKey: Keys.autoPasteEnabled) as? Bool ?? false
+        self.autoCleanupEnabled = ud.object(forKey: Keys.autoCleanupEnabled) as? Bool ?? false
+        let savedHours = ud.integer(forKey: Keys.autoCleanupHours)
+        self.autoCleanupHours = (Self.minAutoCleanupHours...Self.maxAutoCleanupHours).contains(savedHours) ? savedHours : 24
 
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
@@ -269,6 +301,7 @@ public final class ClipboardStore: ObservableObject {
         isModuleEnabled = enabled
         if enabled {
             lastChangeCount = NSPasteboard.general.changeCount
+            purgeExpiredIfDue(force: true)
             startMonitoringTimer()
             syncHotKeyRegistration()
         } else {
@@ -280,9 +313,15 @@ public final class ClipboardStore: ObservableObject {
     public func setUIActive(_ active: Bool) {
         isUIActive = active
         if active {
+            purgeExpiredIfDue(force: true)
             checkPasteboardNow()
             publishToUI()
         }
+    }
+
+    public func openStorageFolder() {
+        try? FileManager.default.createDirectory(at: storageDirURL, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(storageDirURL)
     }
 
     public func stop() {
@@ -485,6 +524,7 @@ public final class ClipboardStore: ObservableObject {
                     guard let self else { return }
                     self.isScreenAsleep = false
                     if self.isModuleEnabled {
+                        self.purgeExpiredIfDue(force: true)
                         self.startMonitoringTimer()
                     }
                 }
@@ -513,6 +553,7 @@ public final class ClipboardStore: ObservableObject {
 
     private func checkPasteboardNow() {
         guard isModuleEnabled else { return }
+        purgeExpiredIfDue(force: false)
         let pb = NSPasteboard.general
         let currentCount = pb.changeCount
         guard currentCount != lastChangeCount else { return }
@@ -610,17 +651,56 @@ public final class ClipboardStore: ObservableObject {
     }
 
     private func trimAndPersist() {
-        enforceRetentionLimits()
-        if isUIActive {
-            publishToUI()
+        let now = Date()
+        lastAutoCleanupCheckAt = now
+        let didChange = enforceRetentionLimits(now: now)
+        if didChange {
+            if isUIActive {
+                publishToUI()
+            }
+            persistHistoryAsync()
         }
-        persistHistoryAsync()
     }
 
-    private func enforceRetentionLimits() {
+    private func purgeExpiredIfDue(force: Bool) {
+        guard autoCleanupEnabled else { return }
+        let now = Date()
+        if !force && now.timeIntervalSince(lastAutoCleanupCheckAt) < 300 {
+            return
+        }
+        lastAutoCleanupCheckAt = now
+        if enforceRetentionLimits(now: now) {
+            if isUIActive {
+                publishToUI()
+            }
+            persistHistoryAsync()
+        }
+    }
+
+    @discardableResult
+    private func enforceRetentionLimits(now: Date = Date()) -> Bool {
+        let previousIDs = latestEntries.map(\.id)
         var pinned = latestEntries.filter(\.isPinned)
         var unpinned = latestEntries.filter { !$0.isPinned }
 
+        // 1. Optional age-based auto-cleanup for unpinned items (pinned items are preserved)
+        if autoCleanupEnabled {
+            let maxAgeSeconds = TimeInterval(max(Self.minAutoCleanupHours, autoCleanupHours)) * 3600.0
+            var freshUnpinned: [ClipboardEntry] = []
+            freshUnpinned.reserveCapacity(unpinned.count)
+            for item in unpinned {
+                if now.timeIntervalSince(item.createdAt) >= maxAgeSeconds {
+                    if let fileName = item.imageFileName {
+                        removeImageFileAsync(fileName)
+                    }
+                } else {
+                    freshUnpinned.append(item)
+                }
+            }
+            unpinned = freshUnpinned
+        }
+
+        // 2. Cap unpinned count
         let maxUnpinned = max(1, maxHistoryCount)
         if unpinned.count > maxUnpinned {
             let dropped = unpinned.suffix(from: maxUnpinned)
@@ -632,7 +712,7 @@ public final class ClipboardStore: ObservableObject {
             unpinned = Array(unpinned.prefix(maxUnpinned))
         }
 
-        // Cap total stored unpinned images to prevent unbounded disk/RAM growth
+        // 3. Cap total stored unpinned images to prevent unbounded disk/RAM growth
         var imageCount = pinned.filter { $0.kind == .image }.count
         var filteredUnpinned: [ClipboardEntry] = []
         filteredUnpinned.reserveCapacity(unpinned.count)
@@ -651,7 +731,9 @@ public final class ClipboardStore: ObservableObject {
 
         pinned.sort { $0.createdAt > $1.createdAt }
         filteredUnpinned.sort { $0.createdAt > $1.createdAt }
-        latestEntries = pinned + filteredUnpinned
+        let updated = pinned + filteredUnpinned
+        latestEntries = updated
+        return updated.map(\.id) != previousIDs
     }
 
     private func sortEntriesInPlace(_ list: inout [ClipboardEntry]) {
@@ -674,8 +756,11 @@ public final class ClipboardStore: ObservableObject {
         }
         latestEntries = decoded
         sortEntriesInPlace(&latestEntries)
-        enforceRetentionLimits()
+        let didPrune = enforceRetentionLimits()
         entries = latestEntries
+        if didPrune {
+            persistHistoryAsync()
+        }
     }
 
     private func persistHistoryAsync() {

@@ -112,13 +112,62 @@ public struct ClipboardPopoverView: View {
                             }
                         }
                     }
-                    .frame(maxHeight: 288)
+                    .frame(maxHeight: 256)
                 }
             }
             .padding(6)
             .glassBentoCard(cornerRadius: 15)
 
-            // 4. Footer
+            // 4. Compact Auto-Cleanup Bar
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(store.autoCleanupEnabled ? Color.accentColor : Color.secondary)
+
+                Text("自动清理")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.primary)
+
+                Spacer(minLength: 4)
+
+                if store.autoCleanupEnabled {
+                    HStack(spacing: 4) {
+                        TextField("", value: $store.autoCleanupHours, format: .number)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 11, weight: .medium))
+                            .monospacedDigit()
+                            .multilineTextAlignment(.center)
+                            .frame(width: 34)
+                            .padding(.vertical, 2.5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Color.primary.opacity(0.08))
+                            )
+                        Text("小时")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                        Stepper(
+                            "",
+                            value: $store.autoCleanupHours,
+                            in: ClipboardStore.minAutoCleanupHours...ClipboardStore.maxAutoCleanupHours
+                        )
+                        .labelsHidden()
+                        .controlSize(.mini)
+                    }
+                    .help("自定义保留时长（1–720 小时），过期未置顶记录将自动清理")
+                }
+
+                Toggle("", isOn: $store.autoCleanupEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+                    .help("开启后按自定义小时数自动清理过期的未置顶记录")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .glassBentoCard(cornerRadius: 12)
+
+            // 5. Footer
             HStack {
                 Text("共 \(store.totalCount) 条 · ⇧⌘V 快速唤出")
                     .font(.system(size: 10.5))
@@ -314,11 +363,69 @@ public struct ClipboardConsoleView: View {
 
                         Divider()
 
+                        Toggle("自动清理过期记录（保留已置顶条目）", isOn: $store.autoCleanupEnabled)
+                            .toggleStyle(.switch)
+
+                        if store.autoCleanupEnabled {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    Text("保留时长")
+                                        .foregroundStyle(.secondary)
+
+                                    HStack(spacing: 4) {
+                                        ForEach([1, 6, 12, 24, 72], id: \.self) { preset in
+                                            let isSelected = (store.autoCleanupHours == preset)
+                                            Button("\(preset)h") {
+                                                store.autoCleanupHours = preset
+                                            }
+                                            .buttonStyle(.plain)
+                                            .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                                            .foregroundStyle(isSelected ? Color.white : Color.primary)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 3.5)
+                                            .background(
+                                                Capsule()
+                                                    .fill(isSelected ? Color.accentColor : Color.primary.opacity(0.08))
+                                            )
+                                        }
+                                    }
+
+                                    Spacer()
+
+                                    TextField("", value: $store.autoCleanupHours, format: .number)
+                                        .textFieldStyle(.roundedBorder)
+                                        .monospacedDigit()
+                                        .multilineTextAlignment(.trailing)
+                                        .frame(width: 58)
+
+                                    Text("小时")
+                                        .foregroundStyle(.secondary)
+
+                                    Stepper(
+                                        "",
+                                        value: $store.autoCleanupHours,
+                                        in: ClipboardStore.minAutoCleanupHours...ClipboardStore.maxAutoCleanupHours
+                                    )
+                                    .labelsHidden()
+                                }
+
+                                Text("超过 \(store.autoCleanupHours) 小时的未置顶文本与图片将自动从本地缓存清除（支持自定义 1–720 小时）。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.leading, 4)
+                        }
+
+                        Divider()
+
                         HStack {
                             Text("当前已保存 \(store.totalCount) 条记录（仅保存在本机，权限 0600）")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
+                            Button("缓存目录") {
+                                store.openStorageFolder()
+                            }
                             Button("清空未置顶") {
                                 store.clearUnpinned()
                             }
