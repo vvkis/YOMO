@@ -3,9 +3,9 @@ import CoreGraphics
 import CoreKit
 
 public enum StatusBadgeRenderer {
-    private static let capsuleTextX: CGFloat = 23.5
-    private static let capsuleArrowCenterOffsetX: CGFloat = 3.0
-    private static let capsuleSpeedTextOffsetX: CGFloat = 7.6
+    private static let capsuleTextX: CGFloat = 22.5
+    private static let capsuleArrowCenterOffsetX: CGFloat = 2.6
+    private static let capsuleSpeedTextOffsetX: CGFloat = 6.8
 
     /// Invariant width reserving worst-case bounds ("100%" / "↓ 99.9 M") so the menu bar icon never shifts horizontally.
     private static let fixedCapsuleWidth: CGFloat = {
@@ -23,12 +23,12 @@ public enum StatusBadgeRenderer {
             attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium)]
         )
         maxBot.append(NSAttributedString(
-            string: " M",
+            string: "\u{2009}M",
             attributes: [.font: NSFont.systemFont(ofSize: 8.6, weight: .medium)]
         ))
 
         let maxTextColWidth = max(maxTop.size().width, capsuleSpeedTextOffsetX + maxBot.size().width)
-        return ceil(capsuleTextX + maxTextColWidth) + 1.0
+        return ceil(capsuleTextX + maxTextColWidth)
     }()
 
     public static func render(
@@ -123,7 +123,7 @@ public enum StatusBadgeRenderer {
             ]
         )
         botAttr.append(NSAttributedString(
-            string: " \(unitText)",
+            string: "\u{2009}\(unitText)",
             attributes: [
                 .font: NSFont.systemFont(ofSize: 8.6, weight: .medium),
                 .foregroundColor: fg.withAlphaComponent(0.92)

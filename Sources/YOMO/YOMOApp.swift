@@ -74,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.imagePosition = .imageOnly
+            button.imageScaling = .scaleNone
             button.target = self
             button.action = #selector(togglePanel(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -235,7 +236,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         button.image = image
-        statusItem.length = NSStatusItem.variableLength
+        let targetLength = image.size.width + 6.0
+        if abs(statusItem.length - targetLength) > 0.1 {
+            statusItem.length = targetLength
+        }
     }
 
     @objc private func togglePanel(_ sender: AnyObject?) {
