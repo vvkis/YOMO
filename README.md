@@ -25,12 +25,12 @@
     <td align="center" width="38%">
       <img src="docs/screenshots/popover-overview.png" alt="YOMO Liquid Glass 主浮窗" width="290" />
       <br />
-      <sub><b>Liquid Glass 玻璃浮窗</b> · 一屏掌控连接、电量、音频与系统遥测</sub>
+      <sub><b>Liquid Glass 玻璃浮窗</b> · 支持 120Hz 自由拖拽排序与 1x/2x/4x 卡片缩放</sub>
     </td>
     <td align="center" width="62%">
       <img src="docs/screenshots/console-dashboard.png" alt="YOMO 独立总控台" width="490" />
       <br />
-      <sub><b>PowerToys 风格总控台</b> · 模块化按需启停，关闭即零后台开销</sub>
+      <sub><b>浮动侧边栏总控台</b> · 现代卡片式设计，模块按需启停、关闭即零后台开销</sub>
     </td>
   </tr>
 </table>
@@ -86,7 +86,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
       <p><b>核心能力</b></p>
       <ul>
         <li><b>实时硬件概览</b>：CPU 占用与实时波形图、系统负载、内存分段水位（App / 联动 / 压缩）与内核内存压力状态、磁盘可用空间、局域网 IP 与上下行网速。</li>
-        <li><b>按需 Top 进程榜</b>：仅在打开「系统占用」二级页时采样 CPU / 内存占用 Top 进程，关闭即停，支持一键跳转系统「活动监视器」。</li>
+        <li><b>按需 Top 进程榜 &amp; 监听端口雷达</b>：仅在打开「系统占用」二级页时采样 CPU / 内存占用 Top 进程，并内置原生<b>监听端口雷达</b>——支持搜索本地监听端口与对应进程、一键安全终止普通进程，root 进程支持一键复制 <code>sudo</code> 终止命令，并可一键跳转系统「活动监视器」。</li>
         <li><b>Wi-Fi 快捷管理</b>：查看当前频段（2.4G / 5G / 6G）、RSSI 信号强度与协商速率，支持开关 Wi-Fi 与按需扫描连接附近网络。</li>
         <li><b>电池深度信息</b>：展示电池健康度、循环次数、供电功率与预计剩余时间，一键切换低电量模式。</li>
       </ul>
@@ -197,7 +197,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ---
 
-### 6. 历史剪贴板（Clipboard）
+### 6. 历史剪贴板 &amp; OCR（Clipboard）
 
 <table>
   <tr>
@@ -209,6 +209,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
       <ul>
         <li><b>全局快捷键秒呼</b>：内置零权限原生 Carbon 热键 <code>⇧⌘V</code>（Shift+Cmd+V），在任意应用内一键唤出历史剪贴板并快速回贴。</li>
         <li><b>文本与图片双记录</b>：自动记录复制的文本与截图（图片在后台线程异步编码，不卡主线程），带来源应用图标与相对时间。</li>
+        <li><b>本地 Vision OCR &amp; 二维码扫描</b>：图片条目支持按需调用 Apple 原生 <code>Vision</code> 引擎一键提取图片文字（OCR）及识别二维码 / 条形码，完全离线运行。</li>
         <li><b>隐私安全过滤</b>：自动识别并跳过 1Password / Bitwarden / 系统密码等密码管理器及敏感标记（<code>ConcealedType</code> / <code>TransientType</code>），绝不记录密码。</li>
         <li><b>搜索、置顶与自动清理</b>：支持按内容或来源应用即时搜索、「全部 / 文本 / 图片 / 置顶」分类筛选、一键置顶常用片段，以及可自定义保留小时数的自动清理开关。</li>
       </ul>
@@ -255,6 +256,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
     </td>
     <td width="62%" valign="top">
       <ul>
+        <li><b>自由拖拽 Bento 布局</b>：主浮窗支持 120Hz 顺滑直接拖拽排序模块卡片，进入布局模式可自由调整 <code>1x / 2x / 4x</code> 卡片尺寸并智能补齐空槽。</li>
         <li><b>三种玻璃外观</b>：支持 <code>深色烟熏</code>、<code>浅色亮玻璃</code> 与 <code>跟随系统</code> 实时切换。</li>
         <li><b>菜单栏图标定制</b>：4 种徽章样式 + 语义配色 / 纯单色模板自由组合。</li>
         <li><b>采样频率调节</b>：支持 <code>1 秒 / 2 秒 / 3 秒</code> 刷新节奏。</li>
@@ -270,7 +272,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ### 方式一：直接下载 Release 安装包（推荐）
 
-1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.3.0.dmg`**（同时提供 **`YOMO-v1.3.0-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
+1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.4.0.dmg`**（同时提供 **`YOMO-v1.4.0-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
 2. 双击打开 `.dmg`，将 **`YOMO.app`** 拖入 **`Applications`（应用程序）** 文件夹。
 3. 打开 **YOMO**，在浮窗底部点击 **「外观与样式」→ 开启「开机自动启动」**，即可随系统静默常驻。
 
@@ -305,7 +307,7 @@ open dist/YOMO.app
 
 # 3.（可选）一键生成 DMG 安装包 + 干净源码 ZIP + SHA256 校验文件
 ./scripts/build-release.sh
-# 产物输出至 dist/YOMO-v1.3.0.dmg、dist/YOMO-v1.3.0-source.zip、dist/SHA256SUMS.txt
+# 产物输出至 dist/YOMO-v1.4.0.dmg、dist/YOMO-v1.4.0-source.zip、dist/SHA256SUMS.txt
 ```
 
 ### 首次运行权限说明

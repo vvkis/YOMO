@@ -25,12 +25,12 @@
     <td align="center" width="38%">
       <img src="docs/screenshots/popover-overview.png" alt="YOMO Liquid Glass Popover" width="290" />
       <br />
-      <sub><b>Liquid Glass Popover</b> · Connectivity, battery, audio &amp; telemetry in one glance</sub>
+      <sub><b>Liquid Glass Popover</b> · 120Hz drag-and-drop Bento grid with 1x / 2x / 4x tile resizing</sub>
     </td>
     <td align="center" width="62%">
       <img src="docs/screenshots/console-dashboard.png" alt="YOMO Hub Console" width="490" />
       <br />
-      <sub><b>PowerToys-Style Hub Console</b> · Toggle modules on demand with zero idle overhead</sub>
+      <sub><b>Floating-Sidebar Hub Console</b> · Modern card-based UI with on-demand module toggles</sub>
     </td>
   </tr>
 </table>
@@ -86,7 +86,7 @@ Every extension module can be enabled or disabled independently in **Hub Console
       <p><b>Highlights</b></p>
       <ul>
         <li><b>Real-Time Hardware Overview</b>: CPU load &amp; sparkline, load average, segmented memory bar (App / Wired / Compressed) with kernel pressure level, disk availability, local IP, and live upload/download speeds.</li>
-        <li><b>On-Demand Top Processes</b>: Samples top CPU and memory processes only while the Telemetry subpage is open, with a one-click jump to Activity Monitor.</li>
+        <li><b>On-Demand Top Processes &amp; Listening Port Radar</b>: Samples top CPU and memory processes only while open, plus a native <b>Listening Port Radar</b> tab with live search, safe process termination, one-click <code>sudo</code> kill command copy for root services, and a shortcut to Activity Monitor.</li>
         <li><b>Quick Wi-Fi Controls</b>: View band (2.4G / 5G / 6G), RSSI, and link speed, toggle Wi-Fi power, and scan/join nearby networks on demand.</li>
         <li><b>Deep Battery Insights</b>: Battery health, cycle count, wattage, estimated time remaining, and one-click Low Power Mode toggle.</li>
       </ul>
@@ -197,7 +197,7 @@ Every extension module can be enabled or disabled independently in **Hub Console
 
 ---
 
-### 6. Clipboard History
+### 6. Clipboard History &amp; Vision OCR
 
 <table>
   <tr>
@@ -209,6 +209,7 @@ Every extension module can be enabled or disabled independently in **Hub Console
       <ul>
         <li><b>Instant Global Hotkey (<code>⇧⌘V</code>)</b>: Zero-permission native Carbon global shortcut lets you summon Clipboard History from any app.</li>
         <li><b>Text &amp; Image History</b>: Automatically records copied text and screenshots (with off-main-thread PNG encoding), displaying source app icons and relative timestamps.</li>
+        <li><b>On-Demand Vision OCR &amp; QR/Barcode Scanning</b>: Extract text (OCR) and scan QR/barcodes directly from any copied image using Apple's native offline <code>Vision</code> framework.</li>
         <li><b>Privacy-Aware Filtering</b>: Automatically skips sensitive pasteboard types (<code>ConcealedType</code> / <code>TransientType</code>) and password managers (Apple Passwords, 1Password, Bitwarden, KeePassXC, etc.).</li>
         <li><b>Search, Pin &amp; Auto-Cleanup</b>: Instant search by text or source app, All / Text / Image / Pinned filters, one-click pinning, and a configurable auto-cleanup timer with custom retention hours.</li>
       </ul>
@@ -255,6 +256,7 @@ Every extension module can be enabled or disabled independently in **Hub Console
     </td>
     <td width="62%" valign="top">
       <ul>
+        <li><b>Drag-and-Drop Bento Grid</b>: Reorder tiles directly at 120Hz in the popover, or enter Layout Mode to resize tiles (<code>1x / 2x / 4x</code>) with smart first-fit row packing.</li>
         <li><b>Three Glass Themes</b>: Switch live between <code>Dark Smoked</code>, <code>Light Frosted</code>, and <code>Follow System</code>.</li>
         <li><b>Badge Personalization</b>: Combine 4 menu bar badge layouts with semantic colors or monochrome templates.</li>
         <li><b>Refresh Cadence</b>: Choose <code>1s</code>, <code>2s</code>, or <code>3s</code> sampling intervals.</li>
@@ -270,7 +272,7 @@ Every extension module can be enabled or disabled independently in **Hub Console
 
 ### Option 1: Download Release DMG (Recommended)
 
-1. Download **`YOMO-v1.3.0.dmg`** from the [Releases page](https://github.com/vvkis/YOMO/releases) (clean **`YOMO-v1.3.0-source.zip`** and `SHA256SUMS.txt` are also provided).
+1. Download **`YOMO-v1.4.0.dmg`** from the [Releases page](https://github.com/vvkis/YOMO/releases) (clean **`YOMO-v1.4.0-source.zip`** and `SHA256SUMS.txt` are also provided).
 2. Open the `.dmg` and drag **`YOMO.app`** into **`Applications`**.
 3. Launch **YOMO**, open **Appearance & Style**, and enable **Launch at Login**.
 
@@ -305,7 +307,7 @@ open dist/YOMO.app
 
 # 3. (Optional) Build Release DMG + clean source ZIP + SHA256 checksums
 ./scripts/build-release.sh
-# Outputs: dist/YOMO-v1.3.0.dmg, dist/YOMO-v1.3.0-source.zip, dist/SHA256SUMS.txt
+# Outputs: dist/YOMO-v1.4.0.dmg, dist/YOMO-v1.4.0-source.zip, dist/SHA256SUMS.txt
 ```
 
 ### Permissions
