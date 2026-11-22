@@ -24,8 +24,61 @@ public enum BadgeStyle: String, CaseIterable, Identifiable {
 public enum TelemetrySortTab: String, CaseIterable, Identifiable {
     case cpu = "CPU 占用"
     case memory = "内存占用"
+    case ports = "监听端口"
 
     public var id: String { rawValue }
+}
+
+public struct ListeningPortItem: Identifiable, @unchecked Sendable {
+    public let id: String
+    public let port: Int
+    public let pid: Int32?
+    public let uid: UInt32
+    public let processName: String
+    public let bindAddress: String
+    public let isLoopbackOnly: Bool
+    public let requiresSudo: Bool
+    public let icon: NSImage?
+
+    public init(
+        port: Int,
+        pid: Int32?,
+        uid: UInt32,
+        processName: String,
+        bindAddress: String,
+        isLoopbackOnly: Bool,
+        requiresSudo: Bool,
+        icon: NSImage?
+    ) {
+        self.id = "\(port)-\(pid.map(String.init) ?? "uid\(uid)")"
+        self.port = port
+        self.pid = pid
+        self.uid = uid
+        self.processName = processName
+        self.bindAddress = bindAddress
+        self.isLoopbackOnly = isLoopbackOnly
+        self.requiresSudo = requiresSudo
+        self.icon = icon
+    }
+
+    public var isSelfProcess: Bool {
+        pid == ProcessInfo.processInfo.processIdentifier
+    }
+
+    public var bindScopeLabel: String {
+        isLoopbackOnly ? "本机" : "对外"
+    }
+
+    public var sudoInspectCommand: String {
+        "sudo lsof -nP -iTCP:\(port) -sTCP:LISTEN"
+    }
+
+    public var sudoKillCommand: String {
+        if let pid {
+            return "sudo kill -15 \(pid)"
+        }
+        return "sudo lsof -t -iTCP:\(port) -sTCP:LISTEN | xargs sudo kill -15"
+    }
 }
 
 public struct ProcessStatItem: Identifiable, @unchecked Sendable {

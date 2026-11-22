@@ -439,14 +439,263 @@ final class SystemMonitor: @unchecked Sendable {
         return (Array(topCPU), Array(topMem))
     }
 
+    enum TerminatePortResult: Sendable {
+        case success
+        case permissionDenied
+        case alreadyExited
+        case protectedProcess
+        case failed(String)
+    }
+
+    /// Pure native TCP LISTEN port scanner (zero subprocesses, < 3ms):
+    /// 1) `libproc` resolves full PID + process name + icon for all current-user listeners.
+    /// 2) `sysctl("net.inet.tcp.pcblist64")` catches privileged/root listeners (uid 0, etc.) so
+    ///    YOMO can flag them with a copyable `sudo` command instead of falsely showing "free".
+    func sampleListeningPorts() -> [ListeningPortItem] {
+        let myUID = getuid()
+        let pids = listAllPIDs()
+
+        struct UserBindingKey: Hashable {
+            let port: Int
+            let pid: pid_t
+        }
+        struct BindingAccum {
+            var addresses: [String]
+            var isLoopbackOnly: Bool
+        }
+
+        var userBindings: [UserBindingKey: BindingAccum] = [:]
+        var coveredPortsByUser = Set<Int>()
+
+        for pid in pids {
+            let fdBufSize = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+            guard fdBufSize > 0 else { continue }
+            let fdCapacity = Int(fdBufSize) / MemoryLayout<proc_fdinfo>.stride + 8
+            var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: fdCapacity)
+            let actualBytes = proc_pidinfo(
+                pid,
+                PROC_PIDLISTFDS,
+                0,
+                &fds,
+                Int32(fds.count * MemoryLayout<proc_fdinfo>.stride)
+            )
+            guard actualBytes > 0 else { continue }
+            let fdCount = min(Int(actualBytes) / MemoryLayout<proc_fdinfo>.stride, fds.count)
+
+            for i in 0..<fdCount {
+                guard fds[i].proc_fdtype == PROX_FDTYPE_SOCKET else { continue }
+                var si = socket_fdinfo()
+                let siSize = proc_pidfdinfo(
+                    pid,
+                    fds[i].proc_fd,
+                    PROC_PIDFDSOCKETINFO,
+                    &si,
+                    Int32(MemoryLayout<socket_fdinfo>.size)
+                )
+                guard siSize == Int32(MemoryLayout<socket_fdinfo>.size) else { continue }
+                guard si.psi.soi_kind == SOCKINFO_TCP else { continue }
+
+                let tcp = si.psi.soi_proto.pri_tcp
+                guard tcp.tcpsi_state == TSI_S_LISTEN else { continue }
+
+                let port = Int(UInt16(bigEndian: UInt16(truncatingIfNeeded: tcp.tcpsi_ini.insi_lport)))
+                guard port > 0 else { continue }
+
+                let addrStr = Self.extractIPAddress(
+                    vflag: tcp.tcpsi_ini.insi_vflag,
+                    v4: tcp.tcpsi_ini.insi_laddr.ina_46.i46a_addr4,
+                    v6: tcp.tcpsi_ini.insi_laddr.ina_6
+                )
+                let loopback = Self.isLoopbackAddress(addrStr)
+                let key = UserBindingKey(port: port, pid: pid)
+                coveredPortsByUser.insert(port)
+
+                if var existing = userBindings[key] {
+                    if !existing.addresses.contains(addrStr) {
+                        existing.addresses.append(addrStr)
+                    }
+                    existing.isLoopbackOnly = existing.isLoopbackOnly && loopback
+                    userBindings[key] = existing
+                } else {
+                    userBindings[key] = BindingAccum(addresses: [addrStr], isLoopbackOnly: loopback)
+                }
+            }
+        }
+
+        // Lazy-resolve app name & icon only for the few listening PIDs
+        var metaByPID: [pid_t: (name: String, icon: NSImage?)] = [:]
+        for key in userBindings.keys where metaByPID[key.pid] == nil {
+            let pid = key.pid
+            if let app = NSRunningApplication(processIdentifier: pid) {
+                let name = app.localizedName ?? app.bundleIdentifier ?? Self.readProcessName(pid: pid) ?? "PID \(pid)"
+                metaByPID[pid] = (name, app.icon)
+            } else {
+                let name = Self.readProcessName(pid: pid) ?? "PID \(pid)"
+                metaByPID[pid] = (name, nil)
+            }
+        }
+
+        var items: [ListeningPortItem] = []
+        items.reserveCapacity(userBindings.count + 8)
+
+        for (key, acc) in userBindings {
+            let meta = metaByPID[key.pid]
+            let displayAddr = Self.formatBindAddress(acc.addresses, isLoopbackOnly: acc.isLoopbackOnly)
+            items.append(
+                ListeningPortItem(
+                    port: key.port,
+                    pid: key.pid,
+                    uid: myUID,
+                    processName: meta?.name ?? "PID \(key.pid)",
+                    bindAddress: displayAddr,
+                    isLoopbackOnly: acc.isLoopbackOnly,
+                    requiresSudo: false,
+                    icon: meta?.icon
+                )
+            )
+        }
+
+        // Pass 2: Kernel TCP PCB list via public Darwin `net.inet.tcp.pcblist64` to surface root/other-user listeners
+        struct KernelPortKey: Hashable {
+            let port: Int
+            let uid: uid_t
+        }
+        var kernelBindings: [KernelPortKey: BindingAccum] = [:]
+
+        var len: size_t = 0
+        if sysctlbyname("net.inet.tcp.pcblist64", nil, &len, nil, 0) == 0, len > 0 {
+            var buf = [UInt8](repeating: 0, count: len + 8192)
+            var actual = buf.count
+            if sysctlbyname("net.inet.tcp.pcblist64", &buf, &actual, nil, 0) == 0,
+               actual >= MemoryLayout<xinpgen>.size {
+                buf.withUnsafeBytes { raw in
+                    guard let base = raw.baseAddress else { return }
+                    let head = base.loadUnaligned(as: xinpgen.self)
+                    var offset = Int(head.xig_len)
+                    let minSize = MemoryLayout<xtcpcb64>.size
+                    let headerSize = MemoryLayout<xinpgen>.size
+
+                    while offset + headerSize < actual {
+                        let xtLen = Int(base.advanced(by: offset).loadUnaligned(as: UInt32.self))
+                        if xtLen <= headerSize || offset + xtLen > actual { break }
+                        if xtLen >= minSize {
+                            let xt = base.advanced(by: offset).loadUnaligned(as: xtcpcb64.self)
+                            if xt.t_state == TCPS_LISTEN {
+                                let inp = xt.xt_inpcb
+                                let port = Int(UInt16(bigEndian: inp.inp_lport))
+                                let uid = inp.xi_socket.so_uid
+                                if port > 0 && (uid != myUID || !coveredPortsByUser.contains(port)) {
+                                    let addrStr = Self.extractIPAddress(
+                                        vflag: inp.inp_vflag,
+                                        v4: inp.inp_dependladdr.inp46_local.ia46_addr4,
+                                        v6: inp.inp_dependladdr.inp6_local
+                                    )
+                                    let loopback = Self.isLoopbackAddress(addrStr)
+                                    let kKey = KernelPortKey(port: port, uid: uid)
+                                    if var existing = kernelBindings[kKey] {
+                                        if !existing.addresses.contains(addrStr) {
+                                            existing.addresses.append(addrStr)
+                                        }
+                                        existing.isLoopbackOnly = existing.isLoopbackOnly && loopback
+                                        kernelBindings[kKey] = existing
+                                    } else {
+                                        kernelBindings[kKey] = BindingAccum(addresses: [addrStr], isLoopbackOnly: loopback)
+                                    }
+                                }
+                            }
+                        }
+                        offset += xtLen
+                    }
+                }
+            }
+        }
+
+        for (kKey, acc) in kernelBindings {
+            let displayAddr = Self.formatBindAddress(acc.addresses, isLoopbackOnly: acc.isLoopbackOnly)
+            let ownerLabel: String
+            if kKey.uid == 0 {
+                ownerLabel = "root 系统进程"
+            } else {
+                ownerLabel = "系统服务 (UID \(kKey.uid))"
+            }
+            items.append(
+                ListeningPortItem(
+                    port: kKey.port,
+                    pid: nil,
+                    uid: kKey.uid,
+                    processName: ownerLabel,
+                    bindAddress: displayAddr,
+                    isLoopbackOnly: acc.isLoopbackOnly,
+                    requiresSudo: true,
+                    icon: nil
+                )
+            )
+        }
+
+        return items.sorted { a, b in
+            if a.port != b.port { return a.port < b.port }
+            return a.processName.localizedCaseInsensitiveCompare(b.processName) == .orderedAscending
+        }
+    }
+
+    func terminateProcess(pid: Int32, force: Bool) -> TerminatePortResult {
+        if pid <= 1 || pid == ProcessInfo.processInfo.processIdentifier {
+            return .protectedProcess
+        }
+        let sig = force ? SIGKILL : SIGTERM
+        if kill(pid, sig) == 0 {
+            return .success
+        }
+        switch errno {
+        case EPERM:
+            return .permissionDenied
+        case ESRCH:
+            return .alreadyExited
+        default:
+            return .failed(String(cString: strerror(errno)))
+        }
+    }
+
+    private static func extractIPAddress(vflag: UInt8, v4: in_addr, v6: in6_addr) -> String {
+        if (vflag & UInt8(INI_IPV4)) != 0 {
+            var addr = v4
+            var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            if inet_ntop(AF_INET, &addr, &buf, socklen_t(INET_ADDRSTRLEN)) != nil {
+                return String(cString: buf)
+            }
+        }
+        if (vflag & UInt8(INI_IPV6)) != 0 {
+            var addr = v6
+            var buf = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+            if inet_ntop(AF_INET6, &addr, &buf, socklen_t(INET6_ADDRSTRLEN)) != nil {
+                return String(cString: buf)
+            }
+        }
+        return "*"
+    }
+
+    private static func isLoopbackAddress(_ addr: String) -> Bool {
+        addr == "127.0.0.1" || addr == "::1" || addr.hasPrefix("127.")
+    }
+
+    private static func formatBindAddress(_ addresses: [String], isLoopbackOnly: Bool) -> String {
+        if isLoopbackOnly {
+            return addresses.contains("127.0.0.1") ? "127.0.0.1" : (addresses.first ?? "127.0.0.1")
+        }
+        if addresses.contains("0.0.0.0") && addresses.contains("::") {
+            return "* (IPv4/6)"
+        }
+        return addresses.first ?? "*"
+    }
+
     private func listAllPIDs() -> [pid_t] {
         let estimatedCount = proc_listallpids(nil, 0)
         guard estimatedCount > 0 else { return [] }
 
-        var pids = [pid_t](repeating: 0, count: Int(estimatedCount) + 64)
-        let bytesReturned = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.stride))
-        guard bytesReturned > 0 else { return [] }
-        let actualCount = Int(bytesReturned) / MemoryLayout<pid_t>.stride
+        var pids = [pid_t](repeating: 0, count: Int(estimatedCount) + 128)
+        let countReturned = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.stride))
+        guard countReturned > 0 else { return [] }
+        let actualCount = min(Int(countReturned), pids.count)
 
         var seen = Set<pid_t>()
         seen.reserveCapacity(actualCount)

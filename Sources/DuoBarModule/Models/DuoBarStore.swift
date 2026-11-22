@@ -33,10 +33,26 @@ public final class DuoBarStore: ObservableObject {
     @Published public var passwordInput: String = ""
 
     // On-demand System Telemetry state (sampled ONLY while currentPage == .telemetry)
-    @Published public var telemetryTab: TelemetrySortTab = .cpu
+    @Published public var telemetryTab: TelemetrySortTab = .cpu {
+        didSet {
+            if telemetryTab == .ports && currentPage == .telemetry {
+                refreshListeningPorts()
+            } else if telemetryTab != .ports {
+                pendingKillPortID = nil
+            }
+        }
+    }
     @Published public var topCPUProcesses: [ProcessStatItem] = []
     @Published public var topMemoryProcesses: [ProcessStatItem] = []
     @Published public var isLoadingProcesses: Bool = false
+
+    // On-demand Listening Port Radar state (sampled ONLY while telemetryTab == .ports)
+    @Published public var listeningPorts: [ListeningPortItem] = []
+    @Published public var isLoadingPorts: Bool = false
+    @Published public var portSearchQuery: String = ""
+    @Published public var pendingKillPortID: String? = nil
+    @Published public var forceKillEligiblePIDs: Set<Int32> = []
+    @Published public var portActionFeedback: String? = nil
 
     /// Latest sampled snapshots used by StatusBadgeRenderer even when popover/console UI is hidden,
     /// avoiding unnecessary SwiftUI view-tree diffs on background ticks.
@@ -63,6 +79,9 @@ public final class DuoBarStore: ObservableObject {
     private var isSamplingBattery = false
     private var isSamplingWiFi = false
     private var isSamplingProcesses = false
+    private var isSamplingPorts = false
+    private var pendingKillResetWork: DispatchWorkItem?
+    private var portFeedbackResetWork: DispatchWorkItem?
     private var lastWiFiEventSampleTime: TimeInterval = 0
     private var lastBatteryEventSampleTime: TimeInterval = 0
     private var lastRefreshInterval: Double = 0
@@ -205,7 +224,13 @@ public final class DuoBarStore: ObservableObject {
             forcePublish: false
         )
         if isPopoverOpen && currentPage == .telemetry {
-            refreshTopProcesses()
+            if telemetryTab == .ports {
+                if tickCount % 3 == 0 {
+                    refreshListeningPorts()
+                }
+            } else {
+                refreshTopProcesses()
+            }
         }
     }
 
@@ -380,6 +405,131 @@ public final class DuoBarStore: ObservableObject {
         }
     }
 
+    // MARK: - On-Demand Listening Port Radar
+
+    public var parsedSearchedPort: Int? {
+        let trimmed = portSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.allSatisfy(\.isNumber),
+              let p = Int(trimmed), (1...65535).contains(p) else {
+            return nil
+        }
+        return p
+    }
+
+    public var filteredListeningPorts: [ListeningPortItem] {
+        let q = portSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return listeningPorts }
+
+        // If user entered a pure port number, prioritize exact port match first, then substring matches
+        if let exactPort = parsedSearchedPort {
+            let exact = listeningPorts.filter { $0.port == exactPort }
+            if !exact.isEmpty {
+                return exact
+            }
+            return listeningPorts.filter { String($0.port).contains(q) }
+        }
+
+        return listeningPorts.filter { item in
+            String(item.port).contains(q)
+                || item.processName.lowercased().contains(q)
+                || item.bindAddress.lowercased().contains(q)
+                || (item.pid.map(String.init)?.contains(q) ?? false)
+                || (item.requiresSudo && ("root".contains(q) || "sudo".contains(q)))
+        }
+    }
+
+    public func refreshListeningPorts() {
+        guard !isSamplingPorts else { return }
+        isSamplingPorts = true
+        if listeningPorts.isEmpty {
+            isLoadingPorts = true
+        }
+        let monitor = systemMonitor
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let scanned = monitor.sampleListeningPorts()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isSamplingPorts = false
+                self.isLoadingPorts = false
+                self.listeningPorts = scanned
+                // Prune force-kill badges for PIDs that have exited
+                let alivePIDs = Set(scanned.compactMap(\.pid))
+                self.forceKillEligiblePIDs.formIntersection(alivePIDs)
+            }
+        }
+    }
+
+    /// Two-step confirmation to prevent accidental kills:
+    /// First click arms confirmation for 3 seconds; second click sends SIGTERM (or SIGKILL if stubborn).
+    public func requestOrConfirmKill(_ item: ListeningPortItem) {
+        guard !item.requiresSudo, let pid = item.pid, !item.isSelfProcess else {
+            copySudoCommand(item.sudoKillCommand, label: "已复制 sudo 终止命令")
+            return
+        }
+
+        if pendingKillPortID != item.id {
+            pendingKillPortID = item.id
+            pendingKillResetWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                Task { @MainActor [weak self] in
+                    if self?.pendingKillPortID == item.id {
+                        self?.pendingKillPortID = nil
+                    }
+                }
+            }
+            pendingKillResetWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
+            return
+        }
+
+        // Confirmed second click -> terminate
+        pendingKillPortID = nil
+        pendingKillResetWork?.cancel()
+
+        let useForce = forceKillEligiblePIDs.contains(pid)
+        let result = systemMonitor.terminateProcess(pid: pid, force: useForce)
+        switch result {
+        case .success:
+            if !useForce {
+                forceKillEligiblePIDs.insert(pid)
+                showPortFeedback("已发送结束信号到 :\(item.port) (PID \(pid))")
+            } else {
+                showPortFeedback("已强制结束 :\(item.port) (PID \(pid))")
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.refreshListeningPorts()
+            }
+        case .alreadyExited:
+            showPortFeedback("端口 :\(item.port) 已释放")
+            refreshListeningPorts()
+        case .permissionDenied:
+            copySudoCommand(item.sudoKillCommand, label: "权限不足，已自动复制 sudo 终止命令")
+        case .protectedProcess:
+            showPortFeedback("受保护进程，不允许结束")
+        case .failed(let msg):
+            showPortFeedback("结束失败：\(msg)")
+        }
+    }
+
+    public func copySudoCommand(_ command: String, label: String = "已复制 sudo 命令") {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(command, forType: .string)
+        showPortFeedback(label)
+    }
+
+    private func showPortFeedback(_ message: String) {
+        portActionFeedback = message
+        portFeedbackResetWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.portActionFeedback = nil
+            }
+        }
+        portFeedbackResetWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
+    }
+
     // MARK: - Wi-Fi Actions (In-Range Only)
 
     public func scanNearbyWiFi() {
@@ -488,9 +638,14 @@ public final class DuoBarStore: ObservableObject {
 
         if page == .telemetry {
             refreshAll(includeHeavy: true, forcePublish: true)
-            refreshTopProcesses()
+            if telemetryTab == .ports {
+                refreshListeningPorts()
+            } else {
+                refreshTopProcesses()
+            }
         } else if wasTelemetry {
             systemMonitor.resetProcessSampler()
+            pendingKillPortID = nil
         }
     }
 
@@ -504,6 +659,9 @@ public final class DuoBarStore: ObservableObject {
         showOtherNetworks = false
         passwordTargetSSID = nil
         passwordInput = ""
+        portSearchQuery = ""
+        pendingKillPortID = nil
+        portActionFeedback = nil
     }
 
     public func toggleLowPowerMode() {
