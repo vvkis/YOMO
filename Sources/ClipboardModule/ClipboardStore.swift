@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import SwiftUI
 import Carbon
 import CryptoKit
 import CoreGraphics
@@ -241,6 +242,7 @@ public final class ClipboardStore: ObservableObject {
     @Published public private(set) var ocrScanningEntryID: UUID? = nil
     @Published public var ocrMergeLines: Bool = false
     @Published public private(set) var ocrToastMessage: String? = nil
+    @Published public private(set) var lastCopiedEntryID: UUID? = nil
 
     @Published public var maxHistoryCount: Int {
         didSet {
@@ -305,6 +307,8 @@ public final class ClipboardStore: ObservableObject {
     private var workspaceObservers: [NSObjectProtocol] = []
     private var hotKeyManager: ClipboardHotKeyManager?
     private var ocrToastClearWorkItem: DispatchWorkItem?
+    private var copyFeedbackClearWorkItem: DispatchWorkItem?
+    private var copyToastHUD: ClipboardCopyToastHUD?
     private let ioQueue = DispatchQueue(label: "com.yomo.clipboard.io", qos: .utility)
     private let ocrQueue = DispatchQueue(label: "com.yomo.clipboard.ocr", qos: .userInitiated)
     private let thumbnailCache = NSCache<NSString, NSImage>()
@@ -437,6 +441,7 @@ public final class ClipboardStore: ObservableObject {
             let fileURL = imagesDirURL.appendingPathComponent(fileName)
             guard let pngData = try? Data(contentsOf: fileURL) else {
                 statusMessage = "图片文件已丢失"
+                showCopyHUD(title: "复制失败", detail: "图片文件已丢失", isError: true)
                 return
             }
             pb.setData(pngData, forType: .png)
@@ -458,11 +463,39 @@ public final class ClipboardStore: ObservableObject {
             persistHistoryAsync()
         }
 
-        if triggerAutoPaste && autoPasteEnabled && AXIsProcessTrusted() {
+        let willAutoPaste = triggerAutoPaste && autoPasteEnabled && AXIsProcessTrusted()
+        let preview = entry.singleLinePreview
+        let shortDetail = preview.count > 24 ? String(preview.prefix(24)) + "…" : preview
+        let hudTitle = willAutoPaste ? "已复制并粘贴" : (entry.kind == .image ? "已复制图片" : "已复制文本")
+        markRecentlyCopied(entry.id)
+        showCopyHUD(title: hudTitle, detail: shortDetail, isError: false)
+
+        if willAutoPaste {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                 Self.sendCommandVKeystroke()
             }
         }
+    }
+
+    private func markRecentlyCopied(_ id: UUID) {
+        copyFeedbackClearWorkItem?.cancel()
+        lastCopiedEntryID = id
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                if self?.lastCopiedEntryID == id {
+                    self?.lastCopiedEntryID = nil
+                }
+            }
+        }
+        copyFeedbackClearWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+    }
+
+    private func showCopyHUD(title: String, detail: String, isError: Bool) {
+        if copyToastHUD == nil {
+            copyToastHUD = ClipboardCopyToastHUD()
+        }
+        copyToastHUD?.show(title: title, detail: detail, isError: isError)
     }
 
     public func togglePin(_ entry: ClipboardEntry) {
@@ -1089,6 +1122,130 @@ public final class ClipboardStore: ObservableObject {
             keyUp.flags = .maskCommand
             keyDown.post(tap: .cghidEventTap)
             keyUp.post(tap: .cghidEventTap)
+        }
+    }
+}
+
+/// Non-activating, click-through floating HUD toast confirming clipboard copies even after
+/// the menu bar popover closes. Always appears on the active cursor screen for dual-display setups.
+@MainActor
+private final class ClipboardCopyToastHUD: NSPanel {
+    private final class Model: ObservableObject {
+        @Published var title: String = "已复制"
+        @Published var detail: String = ""
+        @Published var isError: Bool = false
+    }
+
+    private let model = Model()
+    private var dismissWorkItem: DispatchWorkItem?
+    private let panelWidth: CGFloat = 258
+    private let panelHeight: CGFloat = 46
+
+    init() {
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+
+        isFloatingPanel = true
+        level = .statusBar
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        hidesOnDeactivate = false
+        ignoresMouseEvents = true
+
+        let host = NSHostingView(rootView: ClipboardCopyToastView(model: model))
+        host.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
+        host.autoresizingMask = [.width, .height]
+        self.contentView = host
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    func show(title: String, detail: String, isError: Bool) {
+        dismissWorkItem?.cancel()
+        model.title = title
+        model.detail = detail
+        model.isError = isError
+
+        let mouseLoc = NSEvent.mouseLocation
+        let targetScreen = NSScreen.screens.first(where: { $0.frame.contains(mouseLoc) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        if let screen = targetScreen {
+            let vf = screen.visibleFrame
+            let x = round(vf.midX - panelWidth / 2.0)
+            let y = round(vf.minY + 64.0)
+            setFrameOrigin(NSPoint(x: x, y: y))
+        }
+
+        alphaValue = 0
+        orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.14
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            animator().alphaValue = 1.0
+        }
+
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                NSAnimationContext.runAnimationGroup({ ctx in
+                    ctx.duration = 0.22
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                    self.animator().alphaValue = 0.0
+                }, completionHandler: { [weak self] in
+                    Task { @MainActor [weak self] in
+                        self?.orderOut(nil)
+                        self?.alphaValue = 1.0
+                    }
+                })
+            }
+        }
+        dismissWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.15, execute: work)
+    }
+
+    private struct ClipboardCopyToastView: View {
+        @ObservedObject var model: Model
+
+        var body: some View {
+            HStack(spacing: 9) {
+                Image(systemName: model.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(model.isError ? Color.orange : Color(red: 0.12, green: 0.82, blue: 0.52))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                    if !model.detail.isEmpty {
+                        Text(model.detail)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.white.opacity(0.74))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+
+                Spacer(minLength: 2)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                Capsule()
+                    .fill(Color(nsColor: NSColor(white: 0.11, alpha: 0.90)))
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(Color.white.opacity(0.20), lineWidth: 0.75)
+                    )
+            )
         }
     }
 }

@@ -126,6 +126,7 @@ public struct ClipboardPopoverView: View {
                                         sourceIcon: store.sourceIcon(for: item),
                                         relativeTime: store.relativeTimeText(for: item.createdAt),
                                         isScanningOCR: store.ocrScanningEntryID == item.id,
+                                        isRecentlyCopied: store.lastCopiedEntryID == item.id,
                                         onSelect: {
                                             store.copyEntry(item, triggerAutoPaste: true)
                                             onItemCopied()
@@ -201,7 +202,7 @@ public struct ClipboardPopoverView: View {
 
             // 5. Footer
             HStack {
-                Text("共 \(store.totalCount) 条 · ⇧⌘V 快速唤出")
+                Text("点击即复制 · 共 \(store.totalCount) 条 · ⇧⌘V")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -233,6 +234,7 @@ private struct ClipboardEntryRow: View {
     let sourceIcon: NSImage?
     let relativeTime: String
     let isScanningOCR: Bool
+    let isRecentlyCopied: Bool
     let onSelect: () -> Void
     let onOCR: (() -> Void)?
     let onTogglePin: () -> Void
@@ -301,10 +303,39 @@ private struct ClipboardEntryRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help("点击即可复制到剪贴板")
 
-            // Quick OCR (for images), Pin & Delete actions
+            // Quick Copy feedback / OCR (for images) / Pin & Delete actions
             HStack(spacing: 4) {
-                if let onOCR {
+                if isRecentlyCopied {
+                    HStack(spacing: 3) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 9.5, weight: .semibold))
+                        Text("已复制")
+                            .font(.system(size: 9.5, weight: .semibold))
+                    }
+                    .foregroundStyle(ConsoleTheme.accent)
+                    .padding(.horizontal, 6.5)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(ConsoleTheme.accent.opacity(0.14)))
+                } else if hover.isHovering && onOCR == nil {
+                    Button(action: onSelect) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 9, weight: .medium))
+                            Text("复制")
+                                .font(.system(size: 9.5, weight: .medium))
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.primary.opacity(0.07)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("复制到剪贴板")
+                }
+
+                if let onOCR, !isRecentlyCopied {
                     Button(action: onOCR) {
                         HStack(spacing: 3) {
                             if isScanningOCR {
@@ -808,6 +839,7 @@ public struct ClipboardConsoleView: View {
                                 sourceIcon: store.sourceIcon(for: item),
                                 relativeTime: store.relativeTimeText(for: item.createdAt),
                                 isScanningOCR: store.ocrScanningEntryID == item.id,
+                                isRecentlyCopied: store.lastCopiedEntryID == item.id,
                                 onSelect: {
                                     store.copyEntry(item, triggerAutoPaste: false)
                                 },
