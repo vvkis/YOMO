@@ -522,13 +522,17 @@ public final class ClipboardStore: ObservableObject {
         ocrToastMessage = nil
         ocrScanningEntryID = entryID
 
-        ocrQueue.async { [weak self] in
-            let result = Self.performVisionScan(fileURL: fileURL, entryID: entryID, sourceLabel: sourceLabel)
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                guard self.ocrScanningEntryID == entryID else { return }
-                self.ocrScanningEntryID = nil
-                self.activeOCRResult = result
+        // Barrier through `ioQueue` first so a freshly-captured PNG finishes writing to disk before Vision reads it
+        let scanQueue = ocrQueue
+        ioQueue.async { [weak self] in
+            scanQueue.async { [weak self] in
+                let result = Self.performVisionScan(fileURL: fileURL, entryID: entryID, sourceLabel: sourceLabel)
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    guard self.ocrScanningEntryID == entryID else { return }
+                    self.ocrScanningEntryID = nil
+                    self.activeOCRResult = result
+                }
             }
         }
     }
@@ -629,20 +633,38 @@ public final class ClipboardStore: ObservableObject {
             )
         }
 
-        // Sort observations in natural reading order (top-to-bottom in Vision normalized coords where +Y is up,
-        // and left-to-right when two bounding boxes sit on the same horizontal line).
-        let sortedTextObservations = (textRequest.results ?? []).sorted { a, b in
-            let boxA = a.boundingBox
-            let boxB = b.boundingBox
-            let avgH = max(0.01, (boxA.height + boxB.height) * 0.5)
-            if abs(boxA.midY - boxB.midY) <= avgH * 0.55 {
-                return boxA.minX < boxB.minX
+        // Strictly transitive top-to-bottom sort (+Y is up in Vision normalized coords), then cluster
+        // into visual rows and sort each row strictly left-to-right to avoid Introsort non-transitivity crashes.
+        let ySorted = (textRequest.results ?? []).sorted { lhs, rhs in
+            if lhs.boundingBox.midY != rhs.boundingBox.midY {
+                return lhs.boundingBox.midY > rhs.boundingBox.midY
             }
-            return boxA.midY > boxB.midY
+            return lhs.boundingBox.minX < rhs.boundingBox.minX
         }
 
-        let textLines: [String] = sortedTextObservations.compactMap { obs in
-            obs.topCandidates(1).first?.string
+        var visualRows: [(anchorMidY: CGFloat, avgHeight: CGFloat, items: [VNRecognizedTextObservation])] = []
+        for obs in ySorted {
+            let box = obs.boundingBox
+            if let lastIdx = visualRows.indices.last {
+                let tol = max(0.01, (visualRows[lastIdx].avgHeight + box.height) * 0.5) * 0.55
+                if abs(visualRows[lastIdx].anchorMidY - box.midY) <= tol {
+                    let count = CGFloat(visualRows[lastIdx].items.count)
+                    visualRows[lastIdx].anchorMidY = (visualRows[lastIdx].anchorMidY * count + box.midY) / (count + 1)
+                    visualRows[lastIdx].avgHeight = (visualRows[lastIdx].avgHeight * count + box.height) / (count + 1)
+                    visualRows[lastIdx].items.append(obs)
+                    continue
+                }
+            }
+            visualRows.append((anchorMidY: box.midY, avgHeight: box.height, items: [obs]))
+        }
+
+        let textLines: [String] = visualRows.compactMap { row in
+            let segments = row.items
+                .sorted { $0.boundingBox.minX < $1.boundingBox.minX }
+                .compactMap { $0.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            guard !segments.isEmpty else { return nil }
+            return segments.joined(separator: " ")
         }
         let rawText = textLines.joined(separator: "\n")
         let mergedText = mergeLinesSmartly(textLines)

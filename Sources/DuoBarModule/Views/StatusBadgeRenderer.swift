@@ -3,21 +3,30 @@ import CoreGraphics
 import CoreKit
 
 public enum StatusBadgeRenderer {
-    /// Left ring occupies x: 0.4 ... 19.6 (center 10.0, radius 8.6, stroke 2.05)
-    private static let ringCenterX: CGFloat = 10.0
-    private static let ringRadius: CGFloat = 8.6
-    private static let capsuleTextX: CGFloat = 22.2
-    private static let capsuleArrowCenterOffsetX: CGFloat = 2.0
-    private static let capsuleSpeedTextOffsetX: CGFloat = 5.4
+    /// Left ring occupies x: 0.4 ... 22.0 (center 11.2, radius 9.6, stroke 2.35)
+    private static let ringCenterX: CGFloat = 11.2
+    private static let ringRadius: CGFloat = 9.6
+    private static let capsuleTextX: CGFloat = 24.4
+    private static let capsuleArrowCenterOffsetX: CGFloat = 2.2
+    private static let capsuleSpeedTextOffsetX: CGFloat = 6.0
 
-    private static let topValueFont = NSFont.monospacedDigitSystemFont(ofSize: 10.2, weight: .semibold)
-    private static let topPercentFont = NSFont.systemFont(ofSize: 8.2, weight: .semibold)
-    private static let bottomValueFont = NSFont.monospacedDigitSystemFont(ofSize: 9.2, weight: .medium)
-    private static let bottomUnitFont = NSFont.systemFont(ofSize: 8.0, weight: .semibold)
+    private static let topValueFont = NSFont.monospacedDigitSystemFont(ofSize: 10.8, weight: .bold)
+    private static let topPercentFont = NSFont.systemFont(ofSize: 8.8, weight: .bold)
+    private static let bottomValueFont = NSFont.monospacedDigitSystemFont(ofSize: 9.8, weight: .semibold)
+    private static let bottomUnitFont = NSFont.systemFont(ofSize: 8.4, weight: .bold)
 
-    /// Invariant compact width reserving 3-char speed bounds ("0.5 K" / "999 K") so left-aligned text
+    /// Invariant compact width reserving worst-case bounds ("100%" / "↓ 999 M") so left-aligned text
     /// sits flush to the right canvas edge with zero wasted trailing gap and zero horizontal jitter.
     private static let fixedCapsuleWidth: CGFloat = {
+        let maxTop = NSMutableAttributedString(
+            string: "100",
+            attributes: [.font: topValueFont, .kern: -0.2]
+        )
+        maxTop.append(NSAttributedString(
+            string: "%",
+            attributes: [.font: topPercentFont]
+        ))
+
         let maxBot = NSMutableAttributedString(
             string: "999",
             attributes: [.font: bottomValueFont, .kern: -0.2]
@@ -26,7 +35,8 @@ public enum StatusBadgeRenderer {
             string: "\u{2009}M",
             attributes: [.font: bottomUnitFont]
         ))
-        return ceil(capsuleTextX + capsuleSpeedTextOffsetX + maxBot.size().width)
+        let maxTextWidth = max(maxTop.size().width, capsuleSpeedTextOffsetX + maxBot.size().width)
+        return ceil(capsuleTextX + maxTextWidth)
     }()
 
     public static func render(
@@ -130,7 +140,7 @@ public enum StatusBadgeRenderer {
             ]
         ))
 
-        let width: CGFloat = (style == .capsule) ? fixedCapsuleWidth : 20.5
+        let width: CGFloat = (style == .capsule) ? fixedCapsuleWidth : 22.5
         let size = NSSize(width: width, height: height)
 
         // IMPORTANT: Pre-render into a static Retina NSBitmapImageRep.
@@ -169,12 +179,12 @@ public enum StatusBadgeRenderer {
             switch style {
             case .capsule:
                 if showBatteryPercentInRing {
-                    let center = CGPoint(x: ringCenterX, y: 11.8)
+                    let center = CGPoint(x: ringCenterX, y: 11.7)
                     drawOpenTopBatteryRing(
                         ctx: ctx,
                         center: center,
                         radius: ringRadius,
-                        lineWidth: 2.05,
+                        lineWidth: 2.35,
                         percentage: battery.percentage,
                         track: trackColor,
                         ringColor: batColor,
@@ -182,24 +192,35 @@ public enum StatusBadgeRenderer {
                     )
                     drawWiFiGlyph(
                         ctx: ctx,
-                        center: CGPoint(x: center.x, y: center.y - 0.9),
-                        scale: 0.83,
+                        center: CGPoint(x: center.x, y: center.y - 1.05),
+                        scale: 0.90,
                         signalBars: wifi.signalBars,
                         poweredOn: wifi.isPoweredOn,
                         color: fg
                     )
+                    if battery.isCharging {
+                        drawChargingBolt(
+                            ctx: ctx,
+                            center: CGPoint(x: center.x + ringRadius * 0.72, y: center.y - ringRadius * 0.70),
+                            color: semanticColor ? batColor : fg
+                        )
+                    }
                 } else {
                     let center = CGPoint(x: ringCenterX, y: 12.0)
-                    drawFullRing(ctx: ctx, center: center, radius: ringRadius, lineWidth: 2.15, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
-                    drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.35), scale: 0.93, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
-                    if battery.isCharging && semanticColor {
-                        drawChargingDot(ctx: ctx, center: CGPoint(x: center.x, y: center.y + ringRadius), color: batColor, borderColor: isDarkMenuBar ? .black : .white)
+                    drawFullRing(ctx: ctx, center: center, radius: ringRadius, lineWidth: 2.4, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
+                    drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.35), scale: 1.0, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                    if battery.isCharging {
+                        drawChargingBolt(
+                            ctx: ctx,
+                            center: CGPoint(x: center.x + ringRadius * 0.72, y: center.y - ringRadius * 0.70),
+                            color: semanticColor ? batColor : fg
+                        )
                     }
                 }
 
-                // Clean left-aligned two-line stack inside compact 3-char width slot
+                // Clean left-aligned two-line stack visually spanning the enlarged 21.5pt left ring
                 let topDrawY: CGFloat = 11.4
-                let botDrawY: CGFloat = 2.1
+                let botDrawY: CGFloat = 1.6
                 topAttr.draw(at: NSPoint(x: capsuleTextX, y: topDrawY))
 
                 let botBaselineY = botDrawY - bottomValueFont.descender
@@ -213,32 +234,53 @@ public enum StatusBadgeRenderer {
                 botAttr.draw(at: NSPoint(x: capsuleTextX + capsuleSpeedTextOffsetX, y: botDrawY))
 
             case .dualRing:
-                let center = CGPoint(x: 10.25, y: 12.0)
-                drawFullRing(ctx: ctx, center: center, radius: 9.1, lineWidth: 2.1, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
-                drawFullRing(ctx: ctx, center: center, radius: 6.4, lineWidth: 1.5, progress: cpu.totalUsage / 100.0, track: trackColor.withAlphaComponent(0.18), color: cpuColor)
+                let center = CGPoint(x: 11.25, y: 12.0)
+                drawFullRing(ctx: ctx, center: center, radius: 9.6, lineWidth: 2.35, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
+                drawFullRing(ctx: ctx, center: center, radius: 6.7, lineWidth: 1.65, progress: cpu.totalUsage / 100.0, track: trackColor.withAlphaComponent(0.18), color: cpuColor)
                 let numText = String(format: "%.0f", topPct)
-                let font = NSFont.monospacedDigitSystemFont(ofSize: 7.4, weight: .semibold)
+                let font = NSFont.monospacedDigitSystemFont(ofSize: 7.8, weight: .bold)
                 let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: fg]
                 let textSize = (numText as NSString).size(withAttributes: attrs)
                 (numText as NSString).draw(
                     at: NSPoint(x: center.x - textSize.width / 2.0, y: center.y - textSize.height / 2.0 - 0.2),
                     withAttributes: attrs
                 )
+                if battery.isCharging {
+                    drawChargingBolt(
+                        ctx: ctx,
+                        center: CGPoint(x: center.x + 9.6 * 0.72, y: center.y - 9.6 * 0.70),
+                        color: semanticColor ? batColor : fg
+                    )
+                }
 
             case .triArc:
-                let center = CGPoint(x: 10.25, y: 12.0)
-                let radius: CGFloat = 9.0
-                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.2, startCW: 8, spanCW: 104, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
-                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.2, startCW: 128, spanCW: 104, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
-                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.2, startCW: 248, spanCW: 104, progress: cpu.totalUsage / 100.0, track: trackColor, color: cpuColor)
-                drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 0.94, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                let center = CGPoint(x: 11.25, y: 12.0)
+                let radius: CGFloat = 9.5
+                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 8, spanCW: 104, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
+                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 128, spanCW: 104, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
+                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 248, spanCW: 104, progress: cpu.totalUsage / 100.0, track: trackColor, color: cpuColor)
+                drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 0.98, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                if battery.isCharging {
+                    drawChargingBolt(
+                        ctx: ctx,
+                        center: CGPoint(x: center.x + radius * 0.72, y: center.y - radius * 0.70),
+                        color: semanticColor ? batColor : fg
+                    )
+                }
 
             case .splitArc:
-                let center = CGPoint(x: 10.25, y: 12.0)
-                let radius: CGFloat = 9.0
-                drawBottomUpRightArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.2, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
-                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.2, startCW: 190, spanCW: 160, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
-                drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 0.96, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                let center = CGPoint(x: 11.25, y: 12.0)
+                let radius: CGFloat = 9.5
+                drawBottomUpRightArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
+                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 190, spanCW: 160, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
+                drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 1.0, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                if battery.isCharging {
+                    drawChargingBolt(
+                        ctx: ctx,
+                        center: CGPoint(x: center.x + radius * 0.72, y: center.y - radius * 0.70),
+                        color: semanticColor ? batColor : fg
+                    )
+                }
             }
         }
         NSGraphicsContext.restoreGraphicsState()
@@ -252,13 +294,13 @@ public enum StatusBadgeRenderer {
     private static func drawMicroArrow(ctx: CGContext, origin: CGPoint, pointingUp: Bool, color: NSColor) {
         ctx.saveGState()
         ctx.setStrokeColor(color.cgColor)
-        ctx.setLineWidth(1.3)
+        ctx.setLineWidth(1.55)
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
 
-        let halfH: CGFloat = 2.65
-        let wingW: CGFloat = 1.85
-        let wingH: CGFloat = 1.85
+        let halfH: CGFloat = 2.85
+        let wingW: CGFloat = 2.0
+        let wingH: CGFloat = 2.0
 
         ctx.move(to: CGPoint(x: origin.x, y: origin.y - halfH))
         ctx.addLine(to: CGPoint(x: origin.x, y: origin.y + halfH))
@@ -327,8 +369,8 @@ public enum StatusBadgeRenderer {
         let clampedPct = min(100, max(0, percentage))
         let pctText = "\(clampedPct)"
         let isThreeDigits = clampedPct >= 100
-        let fontSize: CGFloat = isThreeDigits ? 5.8 : 6.5
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+        let fontSize: CGFloat = isThreeDigits ? 6.4 : 7.3
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .heavy)
         let kern: CGFloat = isThreeDigits ? -0.45 : -0.15
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
@@ -481,14 +523,34 @@ public enum StatusBadgeRenderer {
         ctx.restoreGState()
     }
 
-    private static func drawChargingDot(ctx: CGContext, center: CGPoint, color: NSColor, borderColor: NSColor) {
+    /// Draws a crisp Apple-style lightning bolt on the lower-right rim of the battery ring
+    /// with a transparent cutout halo so it pops cleanly over any light/dark/translucent wallpaper.
+    private static func drawChargingBolt(ctx: CGContext, center: CGPoint, color: NSColor) {
+        let bolt = CGMutablePath()
+        bolt.move(to: CGPoint(x: center.x + 0.65, y: center.y + 3.4))
+        bolt.addLine(to: CGPoint(x: center.x - 2.15, y: center.y - 0.25))
+        bolt.addLine(to: CGPoint(x: center.x - 0.05, y: center.y - 0.25))
+        bolt.addLine(to: CGPoint(x: center.x - 0.65, y: center.y - 3.4))
+        bolt.addLine(to: CGPoint(x: center.x + 2.15, y: center.y + 0.25))
+        bolt.addLine(to: CGPoint(x: center.x + 0.05, y: center.y + 0.25))
+        bolt.closeSubpath()
+
+        // 1. Punch clean cutout gap through the ring arc behind the bolt
         ctx.saveGState()
-        let r: CGFloat = 1.5
-        let rect = CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)
-        ctx.setFillColor(borderColor.cgColor)
-        ctx.fillEllipse(in: rect.insetBy(dx: -0.5, dy: -0.5))
+        ctx.setBlendMode(.clear)
+        ctx.setLineWidth(2.1)
+        ctx.setLineJoin(.round)
+        ctx.addPath(bolt)
+        ctx.strokePath()
+        ctx.addPath(bolt)
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        // 2. Fill vivid lightning bolt
+        ctx.saveGState()
         ctx.setFillColor(color.cgColor)
-        ctx.fillEllipse(in: rect)
+        ctx.addPath(bolt)
+        ctx.fillPath()
         ctx.restoreGState()
     }
 }

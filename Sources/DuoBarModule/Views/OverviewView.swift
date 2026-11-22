@@ -80,14 +80,20 @@ struct OverviewView: View {
         for (rowIdx, row) in rows.enumerated() {
             let rowTiles = row.items.map(\.tile)
             let rowH = rowHeight(for: rowTiles)
-            var cursorX: CGFloat = 0
+            var colCursor = 0
 
             for item in row.items {
-                let w = round(CGFloat(item.span) * colUnit + CGFloat(max(0, item.span - 1)) * gridSpacing)
-                frames[item.tile] = CGRect(x: round(cursorX), y: round(cursorY), width: w, height: rowH)
+                let startCol = colCursor
+                let endCol = min(4, startCol + item.span)
+                let x = round(CGFloat(startCol) * (colUnit + gridSpacing))
+                let rightEdge = (endCol == 4)
+                    ? gridTotalWidth
+                    : round(CGFloat(endCol) * colUnit + CGFloat(max(0, endCol - 1)) * gridSpacing)
+                let w = max(20, rightEdge - x)
+                frames[item.tile] = CGRect(x: x, y: round(cursorY), width: w, height: rowH)
                 spans[item.tile] = item.span
                 visualOrder.append(item.tile)
-                cursorX += w + gridSpacing
+                colCursor = endCol
             }
 
             rowBands.append(
@@ -249,6 +255,7 @@ struct OverviewView: View {
                                             moduleSettings.commitPackedVisualOrder(layout.visualOrder)
                                             moduleSettings.draggingOverviewTile = tile
                                             moduleSettings.dragOriginFrame = rect
+                                            moduleSettings.lastSwapTarget = nil
                                         }
                                         moduleSettings.dragTranslation = value.translation
 
@@ -256,18 +263,27 @@ struct OverviewView: View {
                                             x: moduleSettings.dragOriginFrame.midX + value.translation.width,
                                             y: moduleSettings.dragOriginFrame.midY + value.translation.height
                                         )
+                                        let now = Date().timeIntervalSinceReferenceDate
                                         if let drop = findTargetDrop(at: currentCenter, excluding: tile, in: layout) {
-                                            withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.82)) {
-                                                moduleSettings.moveOverviewTile(
-                                                    from: tile,
-                                                    to: drop.target,
-                                                    placeAfter: drop.placeAfter
-                                                )
+                                            let isCoolingDown = (drop.target == moduleSettings.lastSwapTarget)
+                                                && (now - moduleSettings.lastSwapTime < 0.18)
+                                            if !isCoolingDown {
+                                                moduleSettings.lastSwapTarget = drop.target
+                                                moduleSettings.lastSwapTime = now
+                                                withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.82)) {
+                                                    moduleSettings.moveOverviewTile(
+                                                        from: tile,
+                                                        to: drop.target,
+                                                        placeAfter: drop.placeAfter
+                                                    )
+                                                }
                                             }
                                         }
                                     }
                                     .onEnded { _ in
                                         guard moduleSettings.draggingOverviewTile == tile else { return }
+                                        moduleSettings.lastDragEndTime = Date().timeIntervalSinceReferenceDate
+                                        moduleSettings.lastSwapTarget = nil
                                         withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.84)) {
                                             moduleSettings.commitPackedVisualOrder(gridLayout.visualOrder)
                                             moduleSettings.draggingOverviewTile = nil
@@ -368,6 +384,13 @@ struct OverviewView: View {
             .padding(.top, 1)
         }
         .padding(13)
+        .onDisappear {
+            if moduleSettings.draggingOverviewTile != nil || moduleSettings.dragTranslation != .zero {
+                moduleSettings.draggingOverviewTile = nil
+                moduleSettings.dragTranslation = .zero
+                moduleSettings.lastSwapTarget = nil
+            }
+        }
     }
 
     private func findTargetDrop(
@@ -424,7 +447,8 @@ struct OverviewView: View {
     }
 
     private func canTriggerTileTap(isEditing: Bool) -> Bool {
-        !isEditing && moduleSettings.draggingOverviewTile == nil
+        guard !isEditing, moduleSettings.draggingOverviewTile == nil else { return false }
+        return (Date().timeIntervalSinceReferenceDate - moduleSettings.lastDragEndTime) > 0.16
     }
 
     // MARK: - Individual Bento Tile Builders (Adapt gracefully to 1x / 2x / 3x / 4x spans)

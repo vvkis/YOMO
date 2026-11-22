@@ -140,6 +140,9 @@ public final class ModuleSettings: ObservableObject {
     @Published public var draggingOverviewTile: OverviewTileID? = nil
     @Published public var dragTranslation: CGSize = .zero
     public var dragOriginFrame: CGRect = .zero
+    public var lastDragEndTime: TimeInterval = 0
+    public var lastSwapTarget: OverviewTileID? = nil
+    public var lastSwapTime: TimeInterval = 0
 
     public var glassAppearance: GlassAppearanceMode {
         get { GlassAppearanceMode(rawValue: glassAppearanceRaw) ?? .dark }
