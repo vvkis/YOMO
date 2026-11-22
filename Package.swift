@@ -74,8 +74,20 @@ let package = Package(
             ]
         ),
         .target(
+            name: "KeyboardLockModule",
+            dependencies: ["CoreKit"],
+            path: "Sources/KeyboardLockModule",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("SwiftUI"),
+                .linkedFramework("Carbon"),
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("ApplicationServices")
+            ]
+        ),
+        .target(
             name: "DuoBarModule",
-            dependencies: ["CoreKit", "DisplayHiDPIModule", "KeepAwakeModule", "AudioBluetoothModule", "ScrollReverserModule", "ClipboardModule"],
+            dependencies: ["CoreKit", "DisplayHiDPIModule", "KeepAwakeModule", "AudioBluetoothModule", "ScrollReverserModule", "ClipboardModule", "KeyboardLockModule"],
             path: "Sources/DuoBarModule",
             linkerSettings: [
                 .linkedFramework("AppKit"),
@@ -89,7 +101,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "YOMO",
-            dependencies: ["CoreKit", "DuoBarModule", "DisplayHiDPIModule", "KeepAwakeModule", "AudioBluetoothModule", "ScrollReverserModule", "ClipboardModule"],
+            dependencies: ["CoreKit", "DuoBarModule", "DisplayHiDPIModule", "KeepAwakeModule", "AudioBluetoothModule", "ScrollReverserModule", "ClipboardModule", "KeyboardLockModule"],
             path: "Sources/YOMO",
             linkerSettings: [
                 .linkedFramework("AppKit"),

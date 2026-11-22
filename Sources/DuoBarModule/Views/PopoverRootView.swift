@@ -5,6 +5,7 @@ import KeepAwakeModule
 import AudioBluetoothModule
 import ScrollReverserModule
 import ClipboardModule
+import KeyboardLockModule
 
 public struct PopoverRootView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -15,6 +16,7 @@ public struct PopoverRootView: View {
     @ObservedObject public var audioBluetoothStore: AudioBluetoothStore
     @ObservedObject public var scrollReverserStore: ScrollReverserStore
     @ObservedObject public var clipboardStore: ClipboardStore
+    @ObservedObject public var keyboardLockStore: KeyboardLockStore
     public let onDismiss: () -> Void
     public let onOpenConsole: (String?) -> Void
     public let onQuit: () -> Void
@@ -27,6 +29,7 @@ public struct PopoverRootView: View {
         audioBluetoothStore: AudioBluetoothStore,
         scrollReverserStore: ScrollReverserStore,
         clipboardStore: ClipboardStore,
+        keyboardLockStore: KeyboardLockStore,
         onDismiss: @escaping () -> Void,
         onOpenConsole: @escaping (String?) -> Void,
         onQuit: @escaping () -> Void
@@ -38,6 +41,7 @@ public struct PopoverRootView: View {
         self.audioBluetoothStore = audioBluetoothStore
         self.scrollReverserStore = scrollReverserStore
         self.clipboardStore = clipboardStore
+        self.keyboardLockStore = keyboardLockStore
         self.onDismiss = onDismiss
         self.onOpenConsole = onOpenConsole
         self.onQuit = onQuit
@@ -72,12 +76,14 @@ public struct PopoverRootView: View {
                         audioBluetoothStore: audioBluetoothStore,
                         scrollReverserStore: scrollReverserStore,
                         clipboardStore: clipboardStore,
+                        keyboardLockStore: keyboardLockStore,
                         onNavigate: { target in
                             withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
                                 store.navigate(to: target)
                             }
                         },
-                        onOpenConsole: { onOpenConsole(nil) },
+                        onDismiss: onDismiss,
+                        onOpenConsole: onOpenConsole,
                         onQuit: onQuit
                     )
                     .transition(pageTransition)

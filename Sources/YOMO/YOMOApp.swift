@@ -8,6 +8,7 @@ import KeepAwakeModule
 import AudioBluetoothModule
 import ScrollReverserModule
 import ClipboardModule
+import KeyboardLockModule
 
 @main
 struct YOMOLauncher {
@@ -51,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var audioBluetoothStore: AudioBluetoothStore!
     private var scrollReverserStore: ScrollReverserStore!
     private var clipboardStore: ClipboardStore!
+    private var keyboardLockStore: KeyboardLockStore!
 
     private var eventMonitor: Any?
     private var lastRenderKey: BadgeRenderKey?
@@ -70,6 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.toggleClipboardFromHotKey()
         }
         clipboardStore.syncWithModuleEnabled(moduleSettings.clipboardEnabled)
+        keyboardLockStore = KeyboardLockStore()
+        keyboardLockStore.syncWithModuleEnabled(moduleSettings.keyboardLockEnabled)
 
         // 1. Setup single Menu Bar Status Item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -102,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             audioBluetoothStore: audioBluetoothStore,
             scrollReverserStore: scrollReverserStore,
             clipboardStore: clipboardStore,
+            keyboardLockStore: keyboardLockStore,
             onDismiss: {
                 panelRef?.dismissAnimated()
             },
@@ -112,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.keepAwakeStore.deactivate()
                 self?.scrollReverserStore.deactivate(persistPreference: false)
                 self?.clipboardStore.stop()
+                self?.keyboardLockStore.unlock()
                 NSApp.terminate(nil)
             }
         )
@@ -152,6 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keepAwakeStore?.deactivate()
         scrollReverserStore?.deactivate(persistPreference: false)
         clipboardStore?.stop()
+        keyboardLockStore?.unlock()
     }
 
     private func setupMainMenu() {
@@ -269,6 +276,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if moduleSettings.clipboardEnabled {
                 clipboardStore.setUIActive(true)
             }
+            if moduleSettings.keyboardLockEnabled {
+                keyboardLockStore.refreshPermissionState()
+            }
             button.highlight(true)
             panel.show(relativeTo: button)
             startOutsideClickMonitor()
@@ -323,7 +333,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 keepAwakeStore: keepAwakeStore,
                 audioBluetoothStore: audioBluetoothStore,
                 scrollReverserStore: scrollReverserStore,
-                clipboardStore: clipboardStore
+                clipboardStore: clipboardStore,
+                keyboardLockStore: keyboardLockStore
             )
             let win = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 760, height: 500),

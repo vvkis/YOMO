@@ -5,6 +5,7 @@ import KeepAwakeModule
 import AudioBluetoothModule
 import ScrollReverserModule
 import ClipboardModule
+import KeyboardLockModule
 
 struct OverviewView: View {
     @ObservedObject var store: DuoBarStore
@@ -15,14 +16,17 @@ struct OverviewView: View {
     @ObservedObject var audioBluetoothStore: AudioBluetoothStore
     @ObservedObject var scrollReverserStore: ScrollReverserStore
     @ObservedObject var clipboardStore: ClipboardStore
+    @ObservedObject var keyboardLockStore: KeyboardLockStore
     let onNavigate: (PopoverPage) -> Void
-    let onOpenConsole: () -> Void
+    let onDismiss: () -> Void
+    let onOpenConsole: (String?) -> Void
     let onQuit: () -> Void
 
     @StateObject private var batHover = HoverTracker()
     @StateObject private var hidpiHover = HoverTracker()
     @StateObject private var awakeHover = HoverTracker()
     @StateObject private var scrollHover = HoverTracker()
+    @StateObject private var keyLockHover = HoverTracker()
     @StateObject private var clipHover = HoverTracker()
     @StateObject private var telemetryHover = HoverTracker()
 
@@ -231,75 +235,112 @@ struct OverviewView: View {
             }
             .fixedSize(horizontal: false, vertical: true)
 
-            // 2. Compact Mouse Scroll Reverser Strip (isolated toggle area + dedicated expand button)
-            if moduleSettings.scrollReverserEnabled {
-                HStack(spacing: 0) {
-                    Button {
-                        scrollReverserStore.toggle()
-                    } label: {
-                        HStack(spacing: 9) {
-                            ZStack {
-                                if scrollReverserStore.isActive {
-                                    Circle()
-                                        .fill(Color.accentColor)
-                                        .frame(width: 28, height: 28)
-                                } else {
-                                    GlassNeutralCircle(size: 28) { EmptyView() }
+            // 2. Mouse Scroll Reverser + Compact Keyboard Lock Mini-Tile
+            if moduleSettings.scrollReverserEnabled || moduleSettings.keyboardLockEnabled {
+                HStack(spacing: 8) {
+                    if moduleSettings.scrollReverserEnabled {
+                        HStack(spacing: 0) {
+                            Button {
+                                scrollReverserStore.toggle()
+                            } label: {
+                                HStack(spacing: 8) {
+                                    ZStack {
+                                        if scrollReverserStore.isActive {
+                                            Circle()
+                                                .fill(Color.accentColor)
+                                                .frame(width: 28, height: 28)
+                                        } else {
+                                            GlassNeutralCircle(size: 28) { EmptyView() }
+                                        }
+                                        Image(systemName: scrollReverserStore.isActive ? "computermouse.fill" : "computermouse")
+                                            .font(.system(size: 12.5, weight: .semibold))
+                                            .foregroundStyle(scrollReverserStore.isActive ? Color.white : Color.primary)
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text("滚轮翻转")
+                                            .font(.system(size: 12.5, weight: .semibold))
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(1)
+                                        Text(scrollReverserStore.statusSubtitle)
+                                            .font(.system(size: 10.5))
+                                            .foregroundStyle(scrollReverserStore.isActive ? Color.accentColor : Color.primary.opacity(0.68))
+                                            .lineLimit(1)
+                                    }
+
+                                    Spacer(minLength: 2)
+
+                                    Toggle("", isOn: Binding(
+                                        get: { scrollReverserStore.isActive },
+                                        set: { scrollReverserStore.setEnabled($0) }
+                                    ))
+                                    .toggleStyle(.switch)
+                                    .controlSize(.small)
+                                    .labelsHidden()
+                                    .allowsHitTesting(false)
                                 }
-                                Image(systemName: scrollReverserStore.isActive ? "computermouse.fill" : "computermouse")
-                                    .font(.system(size: 12.5, weight: .semibold))
-                                    .foregroundStyle(scrollReverserStore.isActive ? Color.white : Color.primary)
+                                .padding(.leading, 10)
+                                .padding(.trailing, 8)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity)
+                                .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+                            .help(scrollReverserStore.isActive ? "关闭滚轮翻转" : "开启滚轮翻转")
 
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("鼠标滚轮翻转")
-                                    .font(.system(size: 12.5, weight: .semibold))
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(1)
-                                Text(scrollReverserStore.statusSubtitle)
-                                    .font(.system(size: 10.5))
-                                    .foregroundStyle(scrollReverserStore.isActive ? Color.accentColor : Color.primary.opacity(0.68))
-                                    .lineLimit(1)
+                            Divider()
+                                .frame(height: 20)
+                                .opacity(0.45)
+
+                            Button {
+                                onNavigate(.scrollReverser)
+                            } label: {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 26, height: 36)
+                                    .contentShape(Rectangle())
                             }
-
-                            Spacer(minLength: 4)
-
-                            Toggle("", isOn: Binding(
-                                get: { scrollReverserStore.isActive },
-                                set: { scrollReverserStore.setEnabled($0) }
-                            ))
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .labelsHidden()
-                            .allowsHitTesting(false)
+                            .buttonStyle(HighlightRowStyle(hover: scrollHover, cornerRadius: 10))
+                            .padding(.horizontal, 3)
+                            .help("滚轮翻转详细设置")
                         }
-                        .padding(.leading, 10)
-                        .padding(.trailing, 9)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity)
-                        .contentShape(Rectangle())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .glassBentoCard(cornerRadius: 15)
                     }
-                    .buttonStyle(.plain)
-                    .help(scrollReverserStore.isActive ? "关闭滚轮翻转" : "开启滚轮翻转")
 
-                    Divider()
-                        .frame(height: 20)
-                        .opacity(0.45)
-
-                    Button {
-                        onNavigate(.scrollReverser)
-                    } label: {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 30, height: 36)
+                    if moduleSettings.keyboardLockEnabled {
+                        Button {
+                            if keyboardLockStore.isLocked {
+                                keyboardLockStore.unlock()
+                            } else if keyboardLockStore.lock() {
+                                onDismiss()
+                            } else {
+                                onOpenConsole("keyboardLock")
+                            }
+                        } label: {
+                            VStack(spacing: 3) {
+                                Image(systemName: keyboardLockStore.isLocked ? "lock.fill" : "keyboard")
+                                    .font(.system(size: 13.5, weight: .semibold))
+                                    .foregroundStyle(keyboardLockStore.isLocked ? Color.orange : Color.primary)
+                                Text(keyboardLockStore.isLocked ? "已锁定" : "键盘锁")
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundStyle(keyboardLockStore.isLocked ? Color.orange : Color.primary)
+                                    .lineLimit(1)
+                            }
+                            .frame(width: moduleSettings.scrollReverserEnabled ? 72 : nil)
+                            .frame(maxWidth: moduleSettings.scrollReverserEnabled ? nil : .infinity, maxHeight: .infinity)
+                            .padding(.vertical, 8)
+                            .glassBentoCard(cornerRadius: 15)
+                            .opacity(keyLockHover.isHovering ? 0.9 : 1.0)
                             .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { keyLockHover.isHovering = $0 }
+                        .help(keyboardLockStore.isLocked ? "点击解锁键盘（或按 ⌃⌥⌘U）" : "清理键盘时一键锁定键盘输入")
                     }
-                    .buttonStyle(HighlightRowStyle(hover: scrollHover, cornerRadius: 10))
-                    .padding(.horizontal, 4)
-                    .help("滚轮翻转详细设置")
                 }
-                .glassBentoCard(cornerRadius: 15)
+                .fixedSize(horizontal: false, vertical: true)
             }
 
             // 2b. Compact Clipboard History Entry Card (live latest preview + count badge)
@@ -447,7 +488,9 @@ struct OverviewView: View {
 
             // 4. Integrated Utility Footer
             HStack {
-                Button(action: onOpenConsole) {
+                Button {
+                    onOpenConsole(nil)
+                } label: {
                     Label("控制台", systemImage: "square.grid.2x2")
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(.primary.opacity(0.9))

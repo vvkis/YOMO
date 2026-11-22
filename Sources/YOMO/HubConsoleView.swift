@@ -6,6 +6,7 @@ import KeepAwakeModule
 import AudioBluetoothModule
 import ScrollReverserModule
 import ClipboardModule
+import KeyboardLockModule
 
 public enum ConsoleSection: String, CaseIterable, Identifiable {
     case dashboard = "dashboard"
@@ -15,6 +16,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
     case keepAwake = "keepAwake"
     case scrollReverser = "scrollReverser"
     case clipboard = "clipboard"
+    case keyboardLock = "keyboardLock"
 
     public var id: String { rawValue }
 
@@ -27,6 +29,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
         case .keepAwake: return "防休眠"
         case .scrollReverser: return "鼠标滚轮翻转"
         case .clipboard: return "历史剪贴板"
+        case .keyboardLock: return "键盘锁"
         }
     }
 
@@ -39,6 +42,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
         case .keepAwake: return "cup.and.saucer"
         case .scrollReverser: return "computermouse"
         case .clipboard: return "doc.on.clipboard"
+        case .keyboardLock: return "keyboard"
         }
     }
 }
@@ -57,6 +61,7 @@ struct HubConsoleView: View {
     @ObservedObject var audioBluetoothStore: AudioBluetoothStore
     @ObservedObject var scrollReverserStore: ScrollReverserStore
     @ObservedObject var clipboardStore: ClipboardStore
+    @ObservedObject var keyboardLockStore: KeyboardLockStore
 
     var body: some View {
         NavigationSplitView {
@@ -78,6 +83,7 @@ struct HubConsoleView: View {
                         audioBluetoothStore: audioBluetoothStore,
                         scrollReverserStore: scrollReverserStore,
                         clipboardStore: clipboardStore,
+                        keyboardLockStore: keyboardLockStore,
                         onSelect: { viewModel.selectedSection = $0 }
                     )
                 case .duobar:
@@ -92,6 +98,8 @@ struct HubConsoleView: View {
                     ScrollReverserConsoleView(store: scrollReverserStore, moduleSettings: moduleSettings)
                 case .clipboard:
                     ClipboardConsoleView(store: clipboardStore, moduleSettings: moduleSettings)
+                case .keyboardLock:
+                    KeyboardLockConsoleView(store: keyboardLockStore, moduleSettings: moduleSettings)
                 }
             }
             .navigationTitle(viewModel.selectedSection.title)
@@ -108,6 +116,7 @@ private struct DashboardHomeView: View {
     @ObservedObject var audioBluetoothStore: AudioBluetoothStore
     @ObservedObject var scrollReverserStore: ScrollReverserStore
     @ObservedObject var clipboardStore: ClipboardStore
+    @ObservedObject var keyboardLockStore: KeyboardLockStore
     let onSelect: (ConsoleSection) -> Void
 
     var body: some View {
@@ -200,6 +209,23 @@ private struct DashboardHomeView: View {
                             }
                         ),
                         onOpen: { onSelect(.clipboard) }
+                    )
+
+                    // Module 7: Keyboard Lock
+                    ModuleSummaryCard(
+                        icon: keyboardLockStore.isLocked ? "lock.fill" : "keyboard",
+                        tint: .pink,
+                        title: "键盘锁（清洁模式）",
+                        subtitle: keyboardLockStore.statusSubtitle,
+                        statusText: moduleSettings.keyboardLockEnabled ? "已启用" : "已停用",
+                        isOn: Binding(
+                            get: { moduleSettings.keyboardLockEnabled },
+                            set: { enabled in
+                                moduleSettings.keyboardLockEnabled = enabled
+                                keyboardLockStore.syncWithModuleEnabled(enabled)
+                            }
+                        ),
+                        onOpen: { onSelect(.keyboardLock) }
                     )
                 }
             }
