@@ -272,7 +272,7 @@ Every extension module can be enabled or disabled independently in **Hub Console
 
 ### Option 1: Download Release DMG (Recommended)
 
-1. Download **`YOMO-v1.4.0.dmg`** from the [Releases page](https://github.com/vvkis/YOMO/releases) (clean **`YOMO-v1.4.0-source.zip`** and `SHA256SUMS.txt` are also provided).
+1. Download **`YOMO-v1.4.1.dmg`** from the [Releases page](https://github.com/vvkis/YOMO/releases) (clean **`YOMO-v1.4.1-source.zip`** and `SHA256SUMS.txt` are also provided).
 2. Open the `.dmg` and drag **`YOMO.app`** into **`Applications`**.
 3. Launch **YOMO**, open **Appearance & Style**, and enable **Launch at Login**.
 
@@ -307,7 +307,7 @@ open dist/YOMO.app
 
 # 3. (Optional) Build Release DMG + clean source ZIP + SHA256 checksums
 ./scripts/build-release.sh
-# Outputs: dist/YOMO-v1.4.0.dmg, dist/YOMO-v1.4.0-source.zip, dist/SHA256SUMS.txt
+# Outputs: dist/YOMO-v1.4.1.dmg, dist/YOMO-v1.4.1-source.zip, dist/SHA256SUMS.txt
 ```
 
 ### Permissions

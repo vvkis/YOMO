@@ -272,7 +272,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ### 方式一：直接下载 Release 安装包（推荐）
 
-1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.4.0.dmg`**（同时提供 **`YOMO-v1.4.0-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
+1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.4.1.dmg`**（同时提供 **`YOMO-v1.4.1-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
 2. 双击打开 `.dmg`，将 **`YOMO.app`** 拖入 **`Applications`（应用程序）** 文件夹。
 3. 打开 **YOMO**，在浮窗底部点击 **「外观与样式」→ 开启「开机自动启动」**，即可随系统静默常驻。
 
@@ -307,7 +307,7 @@ open dist/YOMO.app
 
 # 3.（可选）一键生成 DMG 安装包 + 干净源码 ZIP + SHA256 校验文件
 ./scripts/build-release.sh
-# 产物输出至 dist/YOMO-v1.4.0.dmg、dist/YOMO-v1.4.0-source.zip、dist/SHA256SUMS.txt
+# 产物输出至 dist/YOMO-v1.4.1.dmg、dist/YOMO-v1.4.1-source.zip、dist/SHA256SUMS.txt
 ```
 
 ### 首次运行权限说明
