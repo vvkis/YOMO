@@ -3,6 +3,34 @@ import CoreGraphics
 import CoreKit
 
 public enum StatusBadgeRenderer {
+    private static let capsuleTextX: CGFloat = 23.5
+    private static let capsuleArrowCenterOffsetX: CGFloat = 3.0
+    private static let capsuleSpeedTextOffsetX: CGFloat = 7.6
+
+    /// Invariant width reserving worst-case bounds ("100%" / "↓ 99.9 M") so the menu bar icon never shifts horizontally.
+    private static let fixedCapsuleWidth: CGFloat = {
+        let maxTop = NSMutableAttributedString(
+            string: "100",
+            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11.2, weight: .medium)]
+        )
+        maxTop.append(NSAttributedString(
+            string: "%",
+            attributes: [.font: NSFont.systemFont(ofSize: 9.6, weight: .medium)]
+        ))
+
+        let maxBot = NSMutableAttributedString(
+            string: "99.9",
+            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium)]
+        )
+        maxBot.append(NSAttributedString(
+            string: " M",
+            attributes: [.font: NSFont.systemFont(ofSize: 8.6, weight: .medium)]
+        ))
+
+        let maxTextColWidth = max(maxTop.size().width, capsuleSpeedTextOffsetX + maxBot.size().width)
+        return ceil(capsuleTextX + maxTextColWidth) + 1.0
+    }()
+
     public static func render(
         battery: BatteryStats,
         wifi: WiFiState,
@@ -68,7 +96,7 @@ public enum StatusBadgeRenderer {
             return .systemBlue
         }()
 
-        // Pre-build attributed strings for capsule style so we can size the canvas tightly with zero wasted trailing gap
+        // Build left-aligned attributed strings rendered inside the invariant fixedCapsuleWidth slot
         let numStr = String(format: "%.0f", topPct)
         let topAttr = NSMutableAttributedString(
             string: numStr,
@@ -102,12 +130,7 @@ public enum StatusBadgeRenderer {
             ]
         ))
 
-        let textX: CGFloat = 23.5
-        let arrowCenterOffsetX: CGFloat = 3.0
-        let speedTextOffsetX: CGFloat = 7.6
-        let textColWidth = max(topAttr.size().width, speedTextOffsetX + botAttr.size().width)
-        let capsuleWidth = ceil(textX + textColWidth) + 1.0
-        let width: CGFloat = (style == .capsule) ? capsuleWidth : 22.0
+        let width: CGFloat = (style == .capsule) ? fixedCapsuleWidth : 22.0
         let size = NSSize(width: width, height: height)
         let scale: CGFloat = NSScreen.main?.backingScaleFactor ?? 2.0
         let pixelW = Int(ceil(width * scale))
@@ -166,10 +189,10 @@ public enum StatusBadgeRenderer {
                     }
                 }
 
-                topAttr.draw(at: NSPoint(x: textX, y: 10.9))
+                topAttr.draw(at: NSPoint(x: capsuleTextX, y: 10.9))
 
-                drawMicroArrow(ctx: ctx, origin: CGPoint(x: textX + arrowCenterOffsetX, y: 5.9), pointingUp: dominantIsUp, color: fg)
-                botAttr.draw(at: NSPoint(x: textX + speedTextOffsetX, y: 0.7))
+                drawMicroArrow(ctx: ctx, origin: CGPoint(x: capsuleTextX + capsuleArrowCenterOffsetX, y: 5.9), pointingUp: dominantIsUp, color: fg)
+                botAttr.draw(at: NSPoint(x: capsuleTextX + capsuleSpeedTextOffsetX, y: 0.7))
 
             case .dualRing:
                 let center = CGPoint(x: 11.0, y: 12.0)
