@@ -203,7 +203,7 @@ public enum StatusBadgeRenderer {
                         percentage: battery.percentage,
                         track: trackColor,
                         ringColor: batColor,
-                        textColor: fg
+                        textColor: (semanticColor && battery.isCharging) ? .systemGreen : fg
                     )
                     drawWiFiGlyph(
                         ctx: ctx,
