@@ -84,6 +84,13 @@ public final class DuoBarStore: ObservableObject {
     private var portFeedbackResetWork: DispatchWorkItem?
     private var pendingBatteryRefreshWork: DispatchWorkItem?
     private var pendingWiFiRefreshWork: DispatchWorkItem?
+    /// Event-triggered, bounded confirmation re-samples after a power-source change.
+    /// IOPS flips `PowerSourceState` to AC immediately on plug-in, but `IsCharging` only settles after
+    /// USB-PD / SMC negotiation (often 1–5 s later) and may not emit a further notification.
+    private var powerSettleWork: DispatchWorkItem?
+    private var powerSettleStep = Int.max  // idle until the first power event opens the window
+    private var powerSettleLastSignature: PowerSignature?
+    private static let powerSettleDelays: [TimeInterval] = [0.6, 1.5, 3.0, 5.0]
     private var lastWiFiEventSampleTime: TimeInterval = 0
     private var lastBatteryEventSampleTime: TimeInterval = 0
     private var lastRefreshInterval: Double = 0
@@ -102,7 +109,9 @@ public final class DuoBarStore: ObservableObject {
 
         batteryService.onPowerSourceChanged = { [weak self] in
             Task { @MainActor [weak self] in
-                self?.refreshBatteryState(throttled: true)
+                guard let self else { return }
+                self.beginPowerSettle()
+                self.refreshBatteryState(throttled: true)
             }
         }
 
@@ -282,7 +291,6 @@ public final class DuoBarStore: ObservableObject {
 
         let batSvc = batteryService
         let prevBat = latestBattery
-        let wasPluggedIn = prevBat.isPluggedIn
         let detailed = isUIActive
         telemetryQueue.async { [weak self] in
             let bat = batSvc.sampleBattery(includeDetailedIORegistry: detailed, previous: prevBat)
@@ -294,21 +302,53 @@ public final class DuoBarStore: ObservableObject {
                     self.battery = bat
                 }
                 self.onStatusBarNeedsRedraw?()
-
-                // If power adapter was just plugged in and USB-PD negotiation hasn't enabled charging yet,
-                // schedule one lightweight trailing check so the charging bolt appears immediately once PD settles.
-                if !wasPluggedIn && bat.isPluggedIn && !bat.isCharging && !bat.isCharged {
-                    self.pendingBatteryRefreshWork?.cancel()
-                    let followUp = DispatchWorkItem { [weak self] in
-                        Task { @MainActor [weak self] in
-                            self?.refreshBatteryState(throttled: false)
-                        }
-                    }
-                    self.pendingBatteryRefreshWork = followUp
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: followUp)
-                }
+                self.scheduleNextPowerSettleIfNeeded(after: bat)
             }
         }
+    }
+
+    // MARK: - Power settle window
+
+    private struct PowerSignature: Equatable {
+        let isPluggedIn: Bool
+        let isCharging: Bool
+        let isCharged: Bool
+    }
+
+    /// Called on every IOPS / LPM event: (re)opens a short, bounded confirmation window.
+    private func beginPowerSettle() {
+        powerSettleWork?.cancel()
+        powerSettleWork = nil
+        powerSettleStep = 0
+        powerSettleLastSignature = nil
+    }
+
+    /// After each battery sample, schedule the next confirmation re-sample until the
+    /// charging state is consistent and stable, or the window (≈10 s total) is exhausted.
+    /// Uses its own work item so trailing-edge throttling can never cancel it.
+    private func scheduleNextPowerSettleIfNeeded(after bat: BatteryStats) {
+        let sig = PowerSignature(isPluggedIn: bat.isPluggedIn, isCharging: bat.isCharging, isCharged: bat.isCharged)
+        let stable = (sig == powerSettleLastSignature)
+        powerSettleLastSignature = sig
+        // Unplugged ⇒ never charging; plugged ⇒ either charging or full. Anything else (AC but not
+        // yet charging, or battery still reporting charging on battery power) is a transient state.
+        let consistent = sig.isPluggedIn ? (sig.isCharging || sig.isCharged) : !sig.isCharging
+        let delays = Self.powerSettleDelays
+        if (consistent && stable) || powerSettleStep >= delays.count {
+            powerSettleWork?.cancel()
+            powerSettleWork = nil
+            return
+        }
+        let delay = delays[powerSettleStep]
+        powerSettleStep += 1
+        powerSettleWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.refreshBatteryState(throttled: false)
+            }
+        }
+        powerSettleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func refreshWiFiQuickState(throttled: Bool = false) {
