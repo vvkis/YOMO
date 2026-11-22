@@ -102,17 +102,10 @@ public enum StatusBadgeRenderer {
             ]
         ))
 
-        let textX: CGFloat = 23.0
-        let referenceSpeed = NSMutableAttributedString(
-            string: "99.9",
-            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium)]
-        )
-        referenceSpeed.append(NSAttributedString(
-            string: " K",
-            attributes: [.font: NSFont.systemFont(ofSize: 8.6, weight: .medium)]
-        ))
-        let speedColWidth = max(referenceSpeed.size().width, botAttr.size().width)
-        let textColWidth = max(topAttr.size().width, 7.2 + speedColWidth)
+        let textX: CGFloat = 23.5
+        let arrowCenterOffsetX: CGFloat = 3.0
+        let speedTextOffsetX: CGFloat = 7.6
+        let textColWidth = max(topAttr.size().width, speedTextOffsetX + botAttr.size().width)
         let capsuleWidth = ceil(textX + textColWidth) + 1.0
         let width: CGFloat = (style == .capsule) ? capsuleWidth : 22.0
         let size = NSSize(width: width, height: height)
@@ -173,13 +166,10 @@ public enum StatusBadgeRenderer {
                     }
                 }
 
-                let rightEdge = width - 1.0
-                let topX = max(textX, rightEdge - topAttr.size().width)
-                topAttr.draw(at: NSPoint(x: topX, y: 10.9))
+                topAttr.draw(at: NSPoint(x: textX, y: 10.9))
 
-                drawMicroArrow(ctx: ctx, origin: CGPoint(x: textX + 2.4, y: 5.9), pointingUp: dominantIsUp, color: fg)
-                let botX = max(textX + 7.2, rightEdge - botAttr.size().width)
-                botAttr.draw(at: NSPoint(x: botX, y: 0.7))
+                drawMicroArrow(ctx: ctx, origin: CGPoint(x: textX + arrowCenterOffsetX, y: 5.9), pointingUp: dominantIsUp, color: fg)
+                botAttr.draw(at: NSPoint(x: textX + speedTextOffsetX, y: 0.7))
 
             case .dualRing:
                 let center = CGPoint(x: 11.0, y: 12.0)
