@@ -56,9 +56,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var keyboardLockStore: KeyboardLockStore!
 
     private var eventMonitor: Any?
-    private var menuBarVisibilityObservers: [NSObjectProtocol] = []
-    private var menuBarWasVisibleWhilePanelOpen = false
-    private var menuBarAnchorScreenNumber: CGDirectDisplayID?
     private var lastRenderKey: BadgeRenderKey?
     private var cancellables = Set<AnyCancellable>()
 
@@ -392,7 +389,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        startMenuBarVisibilityMonitor()
     }
 
     private func stopOutsideClickMonitor() {
@@ -400,74 +396,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSEvent.removeMonitor(monitor)
             eventMonitor = nil
         }
-        stopMenuBarVisibilityMonitor()
-    }
-
-    // MARK: - Full-screen menu bar auto-hide
-
-    /// In a full-screen Space the menu bar auto-hides once the pointer leaves it. System menus keep it
-    /// revealed during menu tracking, but there is no public API to do that for a custom panel, so we
-    /// dismiss the panel when our status item window slides off-screen / becomes occluded instead of
-    /// leaving it floating detached from the (hidden) menu bar.
-    private func startMenuBarVisibilityMonitor() {
-        stopMenuBarVisibilityMonitor()
-        guard let barWindow = statusItem.button?.window else { return }
-        menuBarAnchorScreenNumber = screenNumber(for: barWindow.screen)
-        // Only react to a visible → hidden transition (e.g. hotkey-opened while already hidden stays open).
-        menuBarWasVisibleWhilePanelOpen = isStatusBarWindowOnScreen(barWindow)
-        let nc = NotificationCenter.default
-        let names: [Notification.Name] = [
-            NSWindow.didChangeOcclusionStateNotification,
-            NSWindow.didMoveNotification
-        ]
-        menuBarVisibilityObservers = names.map { name in
-            nc.addObserver(forName: name, object: barWindow, queue: .main) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.handleStatusBarWindowChanged()
-                }
-            }
-        }
-    }
-
-    private func stopMenuBarVisibilityMonitor() {
-        for obs in menuBarVisibilityObservers {
-            NotificationCenter.default.removeObserver(obs)
-        }
-        menuBarVisibilityObservers.removeAll()
-        menuBarWasVisibleWhilePanelOpen = false
-        menuBarAnchorScreenNumber = nil
-    }
-
-    private func handleStatusBarWindowChanged() {
-        guard panel.isVisible, let barWindow = statusItem.button?.window else { return }
-        let visible = isStatusBarWindowOnScreen(barWindow)
-        if visible {
-            if menuBarAnchorScreenNumber == nil {
-                menuBarAnchorScreenNumber = screenNumber(for: barWindow.screen)
-            }
-            menuBarWasVisibleWhilePanelOpen = true
-        } else if menuBarWasVisibleWhilePanelOpen {
-            // Stop observing immediately so the menu bar's slide animation never restarts `dismissAnimated()`.
-            stopMenuBarVisibilityMonitor()
-            panel.dismissAnimated()
-        }
-    }
-
-    private func isStatusBarWindowOnScreen(_ window: NSWindow) -> Bool {
-        guard window.occlusionState.contains(.visible) else { return false }
-        let frame = window.frame
-        // Check against the anchor display first so vertically-stacked displays don't falsely treat
-        // a lower screen's hidden menu bar (slid above its maxY into an upper screen) as still visible.
-        if let anchorID = menuBarAnchorScreenNumber,
-           let anchorScreen = NSScreen.screens.first(where: { screenNumber(for: $0) == anchorID }) {
-            return frame.intersects(anchorScreen.frame) && frame.minY < anchorScreen.frame.maxY - 1
-        }
-        guard let screen = window.screen else { return false }
-        return frame.intersects(screen.frame) && frame.minY < screen.frame.maxY - 1
-    }
-
-    private func screenNumber(for screen: NSScreen?) -> CGDirectDisplayID? {
-        guard let screen else { return nil }
-        return screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
     }
 }
