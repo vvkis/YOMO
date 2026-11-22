@@ -56,6 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var keyboardLockStore: KeyboardLockStore!
 
     private var eventMonitor: Any?
+    private var menuBarVisibilityObservers: [NSObjectProtocol] = []
+    private var menuBarWasVisibleWhilePanelOpen = false
     private var lastRenderKey: BadgeRenderKey?
     private var cancellables = Set<AnyCancellable>()
 
@@ -388,12 +390,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        startMenuBarVisibilityMonitor()
     }
 
     private func stopOutsideClickMonitor() {
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
             eventMonitor = nil
+        }
+        stopMenuBarVisibilityMonitor()
+    }
+
+    // MARK: - Full-screen menu bar auto-hide
+
+    /// In a full-screen Space the menu bar auto-hides once the pointer leaves it. System menus keep it
+    /// revealed during menu tracking, but there is no public API to do that for a custom panel, so we
+    /// dismiss the panel when our status item window slides off-screen / becomes occluded instead of
+    /// leaving it floating detached from the (hidden) menu bar.
+    private func startMenuBarVisibilityMonitor() {
+        stopMenuBarVisibilityMonitor()
+        guard let barWindow = statusItem.button?.window else { return }
+        // Only react to a visible → hidden transition (e.g. hotkey-opened while already hidden stays open).
+        menuBarWasVisibleWhilePanelOpen = isStatusBarWindowOnScreen(barWindow)
+        let nc = NotificationCenter.default
+        let names: [Notification.Name] = [
+            NSWindow.didChangeOcclusionStateNotification,
+            NSWindow.didMoveNotification
+        ]
+        menuBarVisibilityObservers = names.map { name in
+            nc.addObserver(forName: name, object: barWindow, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.handleStatusBarWindowChanged()
+                }
+            }
+        }
+    }
+
+    private func stopMenuBarVisibilityMonitor() {
+        for obs in menuBarVisibilityObservers {
+            NotificationCenter.default.removeObserver(obs)
+        }
+        menuBarVisibilityObservers.removeAll()
+        menuBarWasVisibleWhilePanelOpen = false
+    }
+
+    private func handleStatusBarWindowChanged() {
+        guard panel.isVisible, let barWindow = statusItem.button?.window else { return }
+        let visible = isStatusBarWindowOnScreen(barWindow)
+        if visible {
+            menuBarWasVisibleWhilePanelOpen = true
+        } else if menuBarWasVisibleWhilePanelOpen {
+            panel.dismissAnimated()
+        }
+    }
+
+    private func isStatusBarWindowOnScreen(_ window: NSWindow) -> Bool {
+        guard window.occlusionState.contains(.visible) else { return false }
+        let frame = window.frame
+        return NSScreen.screens.contains { screen in
+            // A hidden menu bar is moved above the top edge of its screen.
+            frame.intersects(screen.frame) && frame.minY < screen.frame.maxY - 1
         }
     }
 }
