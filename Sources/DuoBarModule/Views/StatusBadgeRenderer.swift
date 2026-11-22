@@ -74,7 +74,7 @@ public enum StatusBadgeRenderer {
             if battery.isLowPowerMode {
                 return .systemOrange
             }
-            if battery.isCharging {
+            if battery.showsChargingIndicator {
                 return .systemGreen
             }
             if battery.percentage <= 20 {
@@ -203,7 +203,7 @@ public enum StatusBadgeRenderer {
                         percentage: battery.percentage,
                         track: trackColor,
                         ringColor: batColor,
-                        textColor: (semanticColor && battery.isCharging) ? .systemGreen : fg
+                        textColor: (semanticColor && battery.showsChargingIndicator) ? .systemGreen : fg
                     )
                     drawWiFiGlyph(
                         ctx: ctx,
@@ -213,7 +213,7 @@ public enum StatusBadgeRenderer {
                         poweredOn: wifi.isPoweredOn,
                         color: fg
                     )
-                    if battery.isCharging {
+                    if battery.showsChargingIndicator {
                         drawChargingBolt(
                             ctx: ctx,
                             center: CGPoint(x: center.x + ringRadius * 0.72, y: center.y - ringRadius * 0.70),
@@ -224,7 +224,7 @@ public enum StatusBadgeRenderer {
                     let center = CGPoint(x: ringCenterX, y: 12.0)
                     drawFullRing(ctx: ctx, center: center, radius: ringRadius, lineWidth: 2.4, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
                     drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.35), scale: 1.0, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
-                    if battery.isCharging {
+                    if battery.showsChargingIndicator {
                         drawChargingBolt(
                             ctx: ctx,
                             center: CGPoint(x: center.x + ringRadius * 0.72, y: center.y - ringRadius * 0.70),
@@ -260,7 +260,7 @@ public enum StatusBadgeRenderer {
                     at: NSPoint(x: center.x - textSize.width / 2.0, y: center.y - textSize.height / 2.0 - 0.2),
                     withAttributes: attrs
                 )
-                if battery.isCharging {
+                if battery.showsChargingIndicator {
                     drawChargingBolt(
                         ctx: ctx,
                         center: CGPoint(x: center.x + 9.6 * 0.72, y: center.y - 9.6 * 0.70),
@@ -275,7 +275,7 @@ public enum StatusBadgeRenderer {
                 drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 128, spanCW: 104, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
                 drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 248, spanCW: 104, progress: cpu.totalUsage / 100.0, track: trackColor, color: cpuColor)
                 drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 0.98, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
-                if battery.isCharging {
+                if battery.showsChargingIndicator {
                     drawChargingBolt(
                         ctx: ctx,
                         center: CGPoint(x: center.x + radius * 0.72, y: center.y - radius * 0.70),
@@ -289,7 +289,7 @@ public enum StatusBadgeRenderer {
                 drawBottomUpRightArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
                 drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 190, spanCW: 160, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
                 drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 1.0, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
-                if battery.isCharging {
+                if battery.showsChargingIndicator {
                     drawChargingBolt(
                         ctx: ctx,
                         center: CGPoint(x: center.x + radius * 0.72, y: center.y - radius * 0.70),

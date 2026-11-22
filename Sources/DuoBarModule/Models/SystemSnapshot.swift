@@ -240,10 +240,15 @@ public struct BatteryStats: Sendable {
         return "电池"
     }
 
+    /// SSOT for all "charging" visuals (bolt, green ring / digits): follows AC power-source state,
+    /// which flips immediately on plug/unplug, instead of `IsCharging` (lags behind PD negotiation and
+    /// stays false during Optimized Charging / charge-limit hold).
+    public var showsChargingIndicator: Bool { isPluggedIn }
+
     public var ringColor: Color {
         Self.batteryRingColor(
             percentage: percentage,
-            isCharging: isCharging,
+            isCharging: showsChargingIndicator,
             isLowPowerMode: isLowPowerMode
         )
     }

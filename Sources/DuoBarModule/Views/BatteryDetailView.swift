@@ -26,7 +26,7 @@ struct BatteryDetailView: View {
                     .frame(width: 64, height: 64)
 
                     VStack(spacing: 1) {
-                        if store.battery.isCharging {
+                        if store.battery.showsChargingIndicator {
                             Image(systemName: "bolt.fill")
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundStyle(.green)
