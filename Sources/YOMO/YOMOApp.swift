@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var panel: GlassPopoverPanel!
     private var consoleWindow: NSWindow?
+    private var consoleCloseObserver: NSObjectProtocol?
 
     private let moduleSettings = ModuleSettings()
     private let consoleViewModel = HubConsoleViewModel()
@@ -156,6 +157,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         stopOutsideClickMonitor()
+        if let obs = consoleCloseObserver {
+            NotificationCenter.default.removeObserver(obs)
+            consoleCloseObserver = nil
+        }
         DistributedNotificationCenter.default().removeObserver(self)
         keepAwakeStore?.deactivate()
         scrollReverserStore?.deactivate(persistPreference: false)
@@ -212,8 +217,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mem = duoBarStore.latestMemory
         let net = duoBarStore.latestNetwork
 
+        let style = duoBarStore.prefs.badgeStyle
         let topPct = mem.usagePercent
-        let speedBucket = net.dominantSpeedBucket
+        let showsCPUInBadge = (style == .dualRing || style == .triArc)
+        let showsSpeedInBadge = (style == .capsule)
+        let cpuKey = showsCPUInBadge ? (Int(round(cpu.totalUsage)) / 2) * 2 : 0
+        let speedKey = showsSpeedInBadge ? net.dominantSpeedBucket : ""
         let maxScale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2.0
 
         let key = BadgeRenderKey(
@@ -225,9 +234,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             wifiBars: wifi.signalBars,
             topPctInt: Int(round(topPct)),
             memoryPressure: mem.pressureLevel,
-            cpuPctInt: Int(round(cpu.totalUsage)),
-            speedBucket: speedBucket,
-            style: duoBarStore.prefs.badgeStyle,
+            cpuPctInt: cpuKey,
+            speedBucket: speedKey,
+            style: style,
             semanticColor: duoBarStore.prefs.semanticColor,
             showBatteryPercentInRing: duoBarStore.prefs.showBatteryPercentInRing,
             isDarkMenuBar: isDarkMenuBar,
@@ -363,16 +372,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             win.isReleasedWhenClosed = false
             win.contentViewController = NSHostingController(rootView: contentView)
             win.center()
-            NotificationCenter.default.addObserver(
+            if let oldObs = consoleCloseObserver {
+                NotificationCenter.default.removeObserver(oldObs)
+                consoleCloseObserver = nil
+            }
+            consoleCloseObserver = NotificationCenter.default.addObserver(
                 forName: NSWindow.willCloseNotification,
                 object: win,
                 queue: .main
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    self?.duoBarStore.setConsoleOpen(false)
-                    let popoverVisible = (self?.panel.isVisible == true)
-                    self?.clipboardStore.setUIActive(popoverVisible)
-                    self?.displayStore.setUIActive(popoverVisible)
+                    guard let self else { return }
+                    self.duoBarStore.setConsoleOpen(false)
+                    let popoverVisible = self.panel.isVisible
+                    self.clipboardStore.setUIActive(popoverVisible)
+                    self.displayStore.setUIActive(popoverVisible)
+                    if let obs = self.consoleCloseObserver {
+                        NotificationCenter.default.removeObserver(obs)
+                        self.consoleCloseObserver = nil
+                    }
+                    self.consoleWindow?.contentViewController = nil
+                    self.consoleWindow = nil
                 }
             }
             consoleWindow = win

@@ -604,6 +604,9 @@ public struct TactileVolumeBar: View {
 public enum Formatters {
     public static func splitSpeed(_ bytesPerSec: Double) -> (value: String, unit: String) {
         let kb = max(0, bytesPerSec) / 1024.0
+        if kb < 0.5 {
+            return ("0.0", "K")
+        }
         if kb < 999.5 {
             let num = kb >= 9.95 ? String(format: "%.0f", kb) : String(format: "%.1f", kb)
             return (num, "K")

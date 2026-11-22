@@ -128,8 +128,10 @@ public struct ClipboardPopoverView: View {
                                         isScanningOCR: store.ocrScanningEntryID == item.id,
                                         isRecentlyCopied: store.lastCopiedEntryID == item.id,
                                         onSelect: {
-                                            store.copyEntry(item, triggerAutoPaste: true)
-                                            onItemCopied()
+                                            let didAutoPaste = store.copyEntry(item, triggerAutoPaste: true)
+                                            if didAutoPaste {
+                                                onItemCopied()
+                                            }
                                         },
                                         onOCR: item.kind == .image ? {
                                             store.recognizeEntry(item)
@@ -396,7 +398,18 @@ private struct ClipboardEntryRow: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(hover.isHovering ? Color.primary.opacity(0.08) : Color.clear)
+                .fill(
+                    isRecentlyCopied
+                        ? ConsoleTheme.accent.opacity(0.14)
+                        : (hover.isHovering ? Color.primary.opacity(0.08) : Color.clear)
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(
+                    isRecentlyCopied ? ConsoleTheme.accent.opacity(0.45) : Color.clear,
+                    lineWidth: 0.8
+                )
         )
         .onHover { hover.isHovering = $0 }
     }

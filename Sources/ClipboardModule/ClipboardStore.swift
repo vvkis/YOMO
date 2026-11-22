@@ -428,21 +428,24 @@ public final class ClipboardStore: ObservableObject {
 
     // MARK: - User Actions
 
-    public func copyEntry(_ entry: ClipboardEntry, triggerAutoPaste: Bool = true) {
+    /// Copies the entry to the system pasteboard.
+    /// Returns `true` when auto-paste (⌘V) was triggered so callers can dismiss the popover if needed.
+    @discardableResult
+    public func copyEntry(_ entry: ClipboardEntry, triggerAutoPaste: Bool = true) -> Bool {
         let pb = NSPasteboard.general
         pb.clearContents()
 
         switch entry.kind {
         case .text:
-            guard let text = entry.text else { return }
+            guard let text = entry.text else { return false }
             pb.setString(text, forType: .string)
         case .image:
-            guard let fileName = entry.imageFileName else { return }
+            guard let fileName = entry.imageFileName else { return false }
             let fileURL = imagesDirURL.appendingPathComponent(fileName)
             guard let pngData = try? Data(contentsOf: fileURL) else {
                 statusMessage = "图片文件已丢失"
                 showCopyHUD(title: "复制失败", detail: "图片文件已丢失", isError: true)
-                return
+                return false
             }
             pb.setData(pngData, forType: .png)
             if let img = NSImage(data: pngData), let tiff = img.tiffRepresentation {
@@ -452,16 +455,6 @@ public final class ClipboardStore: ObservableObject {
 
         // Prevent our own write from being re-captured on the next timer tick
         lastChangeCount = pb.changeCount
-
-        // Bump selected item to top of its group (pinned or unpinned)
-        if let idx = latestEntries.firstIndex(where: { $0.id == entry.id }) {
-            var updated = latestEntries.remove(at: idx)
-            updated.createdAt = Date()
-            latestEntries.insert(updated, at: 0)
-            sortEntriesInPlace(&latestEntries)
-            publishToUI()
-            persistHistoryAsync()
-        }
 
         let willAutoPaste = triggerAutoPaste && autoPasteEnabled && AXIsProcessTrusted()
         let preview = entry.singleLinePreview
@@ -475,6 +468,7 @@ public final class ClipboardStore: ObservableObject {
                 Self.sendCommandVKeystroke()
             }
         }
+        return willAutoPaste
     }
 
     private func markRecentlyCopied(_ id: UUID) {
@@ -839,12 +833,12 @@ public final class ClipboardStore: ObservableObject {
     private func startMonitoringTimer() {
         stopMonitoringTimer()
         guard isModuleEnabled && !isScreenAsleep else { return }
-        let newTimer = Timer(timeInterval: 0.75, repeats: true) { [weak self] _ in
+        let newTimer = Timer(timeInterval: 1.2, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.checkPasteboardNow()
             }
         }
-        newTimer.tolerance = 0.25
+        newTimer.tolerance = 0.40
         RunLoop.main.add(newTimer, forMode: .common)
         timer = newTimer
     }

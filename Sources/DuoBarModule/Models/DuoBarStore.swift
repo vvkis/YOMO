@@ -229,6 +229,9 @@ public final class DuoBarStore: ObservableObject {
         tickCount += 1
         // While popover/console is closed, rely 100% on system events for Wi-Fi & Battery,
         // and only sample lightweight kernel Mach/sysctl counters (CPU / Memory / Network bytes).
+        let style = prefs.badgeStyle
+        let includeCPU = isUIActive || style == .dualRing || style == .triArc
+        let includeNetwork = isUIActive || style == .capsule
         let includeDisk = isUIActive && (tickCount % 15 == 0)
         let includeWiFiSignal = isUIActive && ((tickCount % 3 == 0) || currentPage == .wifi)
         let needsBatteryEstimateRefresh = isPopoverOpen
@@ -238,6 +241,8 @@ public final class DuoBarStore: ObservableObject {
         let includeBattery = (isPopoverOpen && currentPage == .battery) || needsBatteryEstimateRefresh
         let includeDetailedBattery = includeBattery
         sampleTelemetryAsync(
+            includeCPU: includeCPU,
+            includeNetwork: includeNetwork,
             includeDisk: includeDisk,
             includeBattery: includeBattery,
             includeDetailedBattery: includeDetailedBattery,
@@ -258,6 +263,8 @@ public final class DuoBarStore: ObservableObject {
 
     public func refreshAll(includeHeavy: Bool = false, forcePublish: Bool = false) {
         sampleTelemetryAsync(
+            includeCPU: true,
+            includeNetwork: true,
             includeDisk: includeHeavy || latestDisk.totalGB == 0,
             includeBattery: true,
             includeDetailedBattery: includeHeavy || isUIActive,
@@ -406,6 +413,8 @@ public final class DuoBarStore: ObservableObject {
     }
 
     private func sampleTelemetryAsync(
+        includeCPU: Bool,
+        includeNetwork: Bool,
         includeDisk: Bool,
         includeBattery: Bool,
         includeDetailedBattery: Bool,
@@ -423,9 +432,9 @@ public final class DuoBarStore: ObservableObject {
         let prevWiFi = latestWiFi
 
         telemetryQueue.async { [weak self] in
-            let nextCPU = mon.sampleCPU()
+            let nextCPU: CPUStats? = includeCPU ? mon.sampleCPU() : nil
             let nextMem = mon.sampleMemory()
-            let nextNet = mon.sampleNetwork(forceRouteRefresh: forceRouteRefresh)
+            let nextNet: NetworkStats? = includeNetwork ? mon.sampleNetwork(forceRouteRefresh: forceRouteRefresh) : nil
             let nextDisk: DiskStats? = includeDisk ? mon.sampleDisk() : nil
             let nextBat: BatteryStats? = includeBattery
                 ? batSvc.sampleBattery(includeDetailedIORegistry: includeDetailedBattery, previous: prevBat)
@@ -435,9 +444,13 @@ public final class DuoBarStore: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isSamplingTelemetry = false
-                self.latestCPU = nextCPU
+                if let nextCPU {
+                    self.latestCPU = nextCPU
+                }
                 self.latestMemory = nextMem
-                self.latestNetwork = nextNet
+                if let nextNet {
+                    self.latestNetwork = nextNet
+                }
                 if let nextDisk {
                     self.latestDisk = nextDisk
                 }
