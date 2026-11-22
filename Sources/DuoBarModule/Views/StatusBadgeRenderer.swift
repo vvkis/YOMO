@@ -150,19 +150,19 @@ public enum StatusBadgeRenderer {
             switch style {
             case .capsule:
                 if showBatteryPercentInRing {
-                    let center = CGPoint(x: 10.5, y: 11.4)
-                    let radius: CGFloat = 8.9
+                    let center = CGPoint(x: 10.5, y: 11.7)
+                    let radius: CGFloat = 9.0
                     drawOpenTopBatteryRing(
                         ctx: ctx,
                         center: center,
                         radius: radius,
-                        lineWidth: 2.15,
+                        lineWidth: 2.1,
                         percentage: battery.percentage,
                         track: trackColor,
                         ringColor: batColor,
                         textColor: (semanticColor && (battery.isCharging || battery.isLowPowerMode || battery.percentage <= 20)) ? batColor : fg
                     )
-                    drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 1.15), scale: 0.88, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                    drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 1.35), scale: 0.86, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
                 } else {
                     let center = CGPoint(x: 10.5, y: 12.0)
                     let radius: CGFloat = 8.9
@@ -295,19 +295,24 @@ public enum StatusBadgeRenderer {
     ) {
         let clampedPct = min(100, max(0, percentage))
         let pctText = "\(clampedPct)"
-        let fontSize: CGFloat = clampedPct >= 100 ? 6.1 : 7.0
-        let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold)
+        let isThreeDigits = clampedPct >= 100
+        // Proportional SF Pro + tight kerning keeps "100" narrow so the ring stays circular instead of U-shaped
+        let fontSize: CGFloat = isThreeDigits ? 5.6 : 6.5
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+        let kern: CGFloat = isThreeDigits ? -0.45 : -0.15
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: textColor
+            .foregroundColor: textColor,
+            .kern: kern
         ]
-        let textSize = (pctText as NSString).size(withAttributes: attrs)
+        let attrStr = NSAttributedString(string: pctText, attributes: attrs)
+        let textSize = attrStr.size()
 
-        // Compute dynamic angular half-gap at 12 o'clock so round stroke caps never collide with digits
-        let halfChord = (textSize.width / 2.0) + 1.9
-        let sinVal = min(0.90, max(0.32, halfChord / radius))
+        // Tight angular gap sized to actual inked width + round-cap clearance
+        let halfChord = (textSize.width / 2.0) + (lineWidth * 0.5) + 0.8
+        let sinVal = min(0.76, max(0.30, halfChord / radius))
         let gapHalfDeg = Double(asin(sinVal)) * 180.0 / .pi
-        let arcSpan = max(120.0, 360.0 - 2.0 * gapHalfDeg)
+        let arcSpan = max(180.0, 360.0 - 2.0 * gapHalfDeg)
 
         drawSegmentArc(
             ctx: ctx,
@@ -321,10 +326,12 @@ public enum StatusBadgeRenderer {
             color: ringColor
         )
 
-        // Visually center digit cap-height right on the top rim of the ring (center.y + radius)
+        // Nestle digits cleanly along the upper chord between the two arc endpoints
+        let arcEndY = center.y + radius * CGFloat(cos(gapHalfDeg * .pi / 180.0))
+        let targetMidY = (arcEndY + (center.y + radius)) * 0.5
         let textX = center.x - textSize.width / 2.0
-        let textY = (center.y + radius) - (font.capHeight / 2.0) + font.descender
-        (pctText as NSString).draw(at: NSPoint(x: textX, y: textY), withAttributes: attrs)
+        let textY = targetMidY - (font.capHeight / 2.0) + font.descender
+        attrStr.draw(at: NSPoint(x: textX, y: textY))
     }
 
     private static func drawSegmentArc(
