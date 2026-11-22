@@ -1,0 +1,719 @@
+import Foundation
+import AppKit
+import Carbon
+import CryptoKit
+import CoreGraphics
+import ApplicationServices
+
+public enum ClipboardItemKind: String, Codable, Sendable {
+    case text
+    case image
+}
+
+public enum ClipboardFilter: String, CaseIterable, Identifiable {
+    case all = "全部"
+    case text = "文本"
+    case image = "图片"
+    case pinned = "置顶"
+
+    public var id: String { rawValue }
+}
+
+public struct ClipboardEntry: Identifiable, Codable, Hashable, Sendable {
+    public let id: UUID
+    public let kind: ClipboardItemKind
+    public let text: String?
+    public let imageFileName: String?
+    public let imageWidth: Int?
+    public let imageHeight: Int?
+    public let contentHash: String
+    public let sourceAppName: String?
+    public let sourceBundleID: String?
+    public var createdAt: Date
+    public var isPinned: Bool
+
+    public init(
+        id: UUID = UUID(),
+        kind: ClipboardItemKind,
+        text: String? = nil,
+        imageFileName: String? = nil,
+        imageWidth: Int? = nil,
+        imageHeight: Int? = nil,
+        contentHash: String,
+        sourceAppName: String? = nil,
+        sourceBundleID: String? = nil,
+        createdAt: Date = Date(),
+        isPinned: Bool = false
+    ) {
+        self.id = id
+        self.kind = kind
+        self.text = text
+        self.imageFileName = imageFileName
+        self.imageWidth = imageWidth
+        self.imageHeight = imageHeight
+        self.contentHash = contentHash
+        self.sourceAppName = sourceAppName
+        self.sourceBundleID = sourceBundleID
+        self.createdAt = createdAt
+        self.isPinned = isPinned
+    }
+
+    public var singleLinePreview: String {
+        switch kind {
+        case .text:
+            let raw = (text ?? "")
+                .replacingOccurrences(of: "\r\n", with: " ")
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: "\t", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if raw.count > 120 {
+                return String(raw.prefix(120)) + "…"
+            }
+            return raw.isEmpty ? "(空白文本)" : raw
+        case .image:
+            if let w = imageWidth, let h = imageHeight, w > 0, h > 0 {
+                return "图片 · \(w) × \(h)"
+            }
+            return "图片"
+        }
+    }
+
+    public var characterCount: Int {
+        text?.count ?? 0
+    }
+}
+
+/// Zero-permission Carbon global hotkey (⇧⌘V) for popping open Clipboard History from any app.
+private final class ClipboardHotKeyManager {
+    private var hotKeyRef: EventHotKeyRef?
+    private var eventHandlerRef: EventHandlerRef?
+    private let onTrigger: () -> Void
+
+    init(onTrigger: @escaping () -> Void) {
+        self.onTrigger = onTrigger
+    }
+
+    deinit {
+        unregister()
+    }
+
+    func registerShiftCmdV() {
+        guard hotKeyRef == nil else { return }
+
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let userData = Unmanaged.passUnretained(self).toOpaque()
+        let installStatus = InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, _, userData -> OSStatus in
+                guard let userData else { return noErr }
+                let mgr = Unmanaged<ClipboardHotKeyManager>.fromOpaque(userData).takeUnretainedValue()
+                mgr.onTrigger()
+                return noErr
+            },
+            1,
+            &eventType,
+            userData,
+            &eventHandlerRef
+        )
+        guard installStatus == noErr else { return }
+
+        // 'YOMO' signature = 0x594F4D4F, keyCode = kVK_ANSI_V (9), modifiers = cmdKey | shiftKey
+        let hotKeyID = EventHotKeyID(signature: OSType(0x594F_4D4F), id: 1)
+        let regStatus = RegisterEventHotKey(
+            UInt32(kVK_ANSI_V),
+            UInt32(cmdKey | shiftKey),
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRef
+        )
+        if regStatus != noErr {
+            unregister()
+        }
+    }
+
+    func unregister() {
+        if let hk = hotKeyRef {
+            UnregisterEventHotKey(hk)
+            hotKeyRef = nil
+        }
+        if let handler = eventHandlerRef {
+            RemoveEventHandler(handler)
+            eventHandlerRef = nil
+        }
+    }
+}
+
+@MainActor
+public final class ClipboardStore: ObservableObject {
+    private enum Keys {
+        static let maxHistoryCount = "clipboard.maxHistoryCount"
+        static let saveImages = "clipboard.saveImages"
+        static let globalHotkeyEnabled = "clipboard.globalHotkeyEnabled"
+        static let autoPasteEnabled = "clipboard.autoPasteEnabled"
+    }
+
+    /// Standard nspasteboard.org & password-manager markers that must NEVER be recorded
+    private static let ignoredPasteboardTypes: Set<String> = [
+        "org.nspasteboard.ConcealedType",
+        "org.nspasteboard.TransientType",
+        "org.nspasteboard.AutoGeneratedType",
+        "com.agilebits.onepassword",
+        "com.typeit4me.clipping",
+        "de.petermaurer.TransientPasteboardType"
+    ]
+
+    private static let ignoredSourceBundleIDs: Set<String> = [
+        "com.apple.keychainaccess",
+        "com.apple.Passwords",
+        "com.1password.1password",
+        "com.agilebits.onepassword7",
+        "com.bitwarden.desktop",
+        "com.lastpass.LastPass",
+        "org.keepassxc.keepassxc"
+    ]
+
+    private static let maxTextBytes = 2 * 1024 * 1024        // 2 MB text cap
+    private static let maxImageBytes = 12 * 1024 * 1024      // 12 MB image cap
+    private static let maxStoredImages = 10                  // Bound disk & memory for images
+
+    @Published public private(set) var entries: [ClipboardEntry] = []
+    @Published public var searchQuery: String = ""
+    @Published public var activeFilter: ClipboardFilter = .all
+    @Published public var statusMessage: String? = nil
+
+    @Published public var maxHistoryCount: Int {
+        didSet {
+            UserDefaults.standard.set(maxHistoryCount, forKey: Keys.maxHistoryCount)
+            trimAndPersist()
+        }
+    }
+
+    @Published public var saveImages: Bool {
+        didSet {
+            UserDefaults.standard.set(saveImages, forKey: Keys.saveImages)
+        }
+    }
+
+    @Published public var globalHotkeyEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(globalHotkeyEnabled, forKey: Keys.globalHotkeyEnabled)
+            syncHotKeyRegistration()
+        }
+    }
+
+    @Published public var autoPasteEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(autoPasteEnabled, forKey: Keys.autoPasteEnabled)
+        }
+    }
+
+    /// Invoked when the user presses the global ⇧⌘V shortcut anywhere on macOS
+    public var onGlobalHotKeyPressed: (() -> Void)?
+
+    /// Internal snapshot updated even when UI is hidden (zero SwiftUI diffs while idle)
+    private var latestEntries: [ClipboardEntry] = []
+    private var lastChangeCount: Int = NSPasteboard.general.changeCount
+    private var timer: Timer?
+    private var isModuleEnabled: Bool = true
+    private var isUIActive: Bool = false
+    private var isScreenAsleep: Bool = false
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var hotKeyManager: ClipboardHotKeyManager?
+    private let ioQueue = DispatchQueue(label: "com.yomo.clipboard.io", qos: .utility)
+    private let thumbnailCache = NSCache<NSString, NSImage>()
+    private let appIconCache = NSCache<NSString, NSImage>()
+
+    private let storageDirURL: URL
+    private let historyFileURL: URL
+    private let imagesDirURL: URL
+
+    public init() {
+        let ud = UserDefaults.standard
+        let savedMax = ud.integer(forKey: Keys.maxHistoryCount)
+        self.maxHistoryCount = [30, 50, 100].contains(savedMax) ? savedMax : 50
+        self.saveImages = ud.object(forKey: Keys.saveImages) as? Bool ?? true
+        self.globalHotkeyEnabled = ud.object(forKey: Keys.globalHotkeyEnabled) as? Bool ?? true
+        self.autoPasteEnabled = ud.object(forKey: Keys.autoPasteEnabled) as? Bool ?? false
+
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        self.storageDirURL = appSupport.appendingPathComponent("YOMO", isDirectory: true)
+        self.historyFileURL = storageDirURL.appendingPathComponent("clipboard-history.json")
+        self.imagesDirURL = storageDirURL.appendingPathComponent("clipboard-images", isDirectory: true)
+
+        thumbnailCache.countLimit = 24
+        appIconCache.countLimit = 32
+
+        loadPersistedHistory()
+        setupSleepWakeObservers()
+        setupHotKeyManager()
+        lastChangeCount = NSPasteboard.general.changeCount
+    }
+
+    deinit {
+        timer?.invalidate()
+        hotKeyManager?.unregister()
+        let nc = NSWorkspace.shared.notificationCenter
+        for obs in workspaceObservers {
+            nc.removeObserver(obs)
+        }
+    }
+
+    // MARK: - Lifecycle & Visibility Gating
+
+    public func syncWithModuleEnabled(_ enabled: Bool) {
+        isModuleEnabled = enabled
+        if enabled {
+            lastChangeCount = NSPasteboard.general.changeCount
+            startMonitoringTimer()
+            syncHotKeyRegistration()
+        } else {
+            stopMonitoringTimer()
+            hotKeyManager?.unregister()
+        }
+    }
+
+    public func setUIActive(_ active: Bool) {
+        isUIActive = active
+        if active {
+            checkPasteboardNow()
+            publishToUI()
+        }
+    }
+
+    public func stop() {
+        stopMonitoringTimer()
+        hotKeyManager?.unregister()
+    }
+
+    // MARK: - Computed Properties for Views
+
+    public var filteredEntries: [ClipboardEntry] {
+        let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return entries.filter { item in
+            switch activeFilter {
+            case .all: break
+            case .text: if item.kind != .text { return false }
+            case .image: if item.kind != .image { return false }
+            case .pinned: if !item.isPinned { return false }
+            }
+            if q.isEmpty { return true }
+            if let text = item.text, text.lowercased().contains(q) { return true }
+            if let app = item.sourceAppName, app.lowercased().contains(q) { return true }
+            if item.kind == .image && ("图片".contains(q) || "image".contains(q)) { return true }
+            return false
+        }
+    }
+
+    public var latestPreviewSubtitle: String {
+        guard let first = entries.first ?? latestEntries.first else {
+            return "暂无记录 · ⇧⌘V 唤出"
+        }
+        return first.singleLinePreview
+    }
+
+    public var totalCount: Int {
+        entries.count
+    }
+
+    public var hasUnpinnedItems: Bool {
+        entries.contains(where: { !$0.isPinned })
+    }
+
+    // MARK: - User Actions
+
+    public func copyEntry(_ entry: ClipboardEntry, triggerAutoPaste: Bool = true) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+
+        switch entry.kind {
+        case .text:
+            guard let text = entry.text else { return }
+            pb.setString(text, forType: .string)
+        case .image:
+            guard let fileName = entry.imageFileName else { return }
+            let fileURL = imagesDirURL.appendingPathComponent(fileName)
+            guard let pngData = try? Data(contentsOf: fileURL) else {
+                statusMessage = "图片文件已丢失"
+                return
+            }
+            pb.setData(pngData, forType: .png)
+            if let img = NSImage(data: pngData), let tiff = img.tiffRepresentation {
+                pb.setData(tiff, forType: .tiff)
+            }
+        }
+
+        // Prevent our own write from being re-captured on the next timer tick
+        lastChangeCount = pb.changeCount
+
+        // Bump selected item to top of its group (pinned or unpinned)
+        if let idx = latestEntries.firstIndex(where: { $0.id == entry.id }) {
+            var updated = latestEntries.remove(at: idx)
+            updated.createdAt = Date()
+            latestEntries.insert(updated, at: 0)
+            sortEntriesInPlace(&latestEntries)
+            publishToUI()
+            persistHistoryAsync()
+        }
+
+        if triggerAutoPaste && autoPasteEnabled && AXIsProcessTrusted() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                Self.sendCommandVKeystroke()
+            }
+        }
+    }
+
+    public func togglePin(_ entry: ClipboardEntry) {
+        guard let idx = latestEntries.firstIndex(where: { $0.id == entry.id }) else { return }
+        latestEntries[idx].isPinned.toggle()
+        sortEntriesInPlace(&latestEntries)
+        publishToUI()
+        persistHistoryAsync()
+    }
+
+    public func deleteEntry(_ entry: ClipboardEntry) {
+        latestEntries.removeAll { $0.id == entry.id }
+        if let fileName = entry.imageFileName {
+            removeImageFileAsync(fileName)
+        }
+        publishToUI()
+        persistHistoryAsync()
+    }
+
+    public func clearUnpinned() {
+        let removedImages = latestEntries.filter { !$0.isPinned }.compactMap(\.imageFileName)
+        latestEntries.removeAll { !$0.isPinned }
+        for fileName in removedImages {
+            removeImageFileAsync(fileName)
+        }
+        publishToUI()
+        persistHistoryAsync()
+    }
+
+    public func clearAll() {
+        let removedImages = latestEntries.compactMap(\.imageFileName)
+        latestEntries.removeAll()
+        for fileName in removedImages {
+            removeImageFileAsync(fileName)
+        }
+        publishToUI()
+        persistHistoryAsync()
+    }
+
+    public func thumbnail(for entry: ClipboardEntry) -> NSImage? {
+        guard entry.kind == .image, let fileName = entry.imageFileName else { return nil }
+        let key = fileName as NSString
+        if let cached = thumbnailCache.object(forKey: key) {
+            return cached
+        }
+        let url = imagesDirURL.appendingPathComponent(fileName)
+        guard let img = NSImage(contentsOf: url) else { return nil }
+        thumbnailCache.setObject(img, forKey: key)
+        return img
+    }
+
+    public func sourceIcon(for entry: ClipboardEntry) -> NSImage? {
+        guard let bundleID = entry.sourceBundleID, !bundleID.isEmpty else { return nil }
+        let key = bundleID as NSString
+        if let cached = appIconCache.object(forKey: key) {
+            return cached
+        }
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return nil
+        }
+        let icon = NSWorkspace.shared.icon(forFile: appURL.path)
+        appIconCache.setObject(icon, forKey: key)
+        return icon
+    }
+
+    public func relativeTimeText(for date: Date) -> String {
+        let sec = max(0, Int(Date().timeIntervalSince(date)))
+        if sec < 60 { return "刚刚" }
+        if sec < 3600 { return "\(sec / 60) 分钟前" }
+        if sec < 86400 { return "\(sec / 3600) 小时前" }
+        return "\(sec / 86400) 天前"
+    }
+
+    public func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    public var hasAccessibilityForAutoPaste: Bool {
+        AXIsProcessTrusted()
+    }
+
+    // MARK: - Pasteboard Capture (Privacy-Aware & Low-Overhead)
+
+    private func setupHotKeyManager() {
+        let mgr = ClipboardHotKeyManager { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.onGlobalHotKeyPressed?()
+            }
+        }
+        self.hotKeyManager = mgr
+        syncHotKeyRegistration()
+    }
+
+    private func syncHotKeyRegistration() {
+        if isModuleEnabled && globalHotkeyEnabled {
+            hotKeyManager?.registerShiftCmdV()
+        } else {
+            hotKeyManager?.unregister()
+        }
+    }
+
+    private func setupSleepWakeObservers() {
+        let nc = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.screensDidSleepNotification, NSWorkspace.willSleepNotification] {
+            let obs = nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.isScreenAsleep = true
+                    self?.stopMonitoringTimer()
+                }
+            }
+            workspaceObservers.append(obs)
+        }
+        for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.didWakeNotification] {
+            let obs = nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.isScreenAsleep = false
+                    if self.isModuleEnabled {
+                        self.startMonitoringTimer()
+                    }
+                }
+            }
+            workspaceObservers.append(obs)
+        }
+    }
+
+    private func startMonitoringTimer() {
+        stopMonitoringTimer()
+        guard isModuleEnabled && !isScreenAsleep else { return }
+        let newTimer = Timer(timeInterval: 0.75, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.checkPasteboardNow()
+            }
+        }
+        newTimer.tolerance = 0.25
+        RunLoop.main.add(newTimer, forMode: .common)
+        timer = newTimer
+    }
+
+    private func stopMonitoringTimer() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func checkPasteboardNow() {
+        guard isModuleEnabled else { return }
+        let pb = NSPasteboard.general
+        let currentCount = pb.changeCount
+        guard currentCount != lastChangeCount else { return }
+        lastChangeCount = currentCount
+
+        // 1. Privacy check: skip concealed / transient / password manager clipboard items
+        let types = Set((pb.types ?? []).map(\.rawValue))
+        if !types.isDisjoint(with: Self.ignoredPasteboardTypes) {
+            return
+        }
+
+        let frontApp = NSWorkspace.shared.frontmostApplication
+        let bundleID = frontApp?.bundleIdentifier
+        if let bundleID, Self.ignoredSourceBundleIDs.contains(bundleID) {
+            return
+        }
+        let appName = frontApp?.localizedName
+
+        // 2. Capture Text (prefer string over image when both exist, e.g. rich text from browsers/Keynote)
+        if let str = pb.string(forType: .string) {
+            let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, str.utf8.count <= Self.maxTextBytes else { return }
+            let hash = Self.sha256Hex(Data(str.utf8))
+            insertOrBumpEntry(
+                ClipboardEntry(
+                    kind: .text,
+                    text: str,
+                    contentHash: hash,
+                    sourceAppName: appName,
+                    sourceBundleID: bundleID
+                )
+            )
+            return
+        }
+
+        // 3. Capture Image (screenshots / copied images) when enabled
+        if saveImages {
+            let rawData = pb.data(forType: .png) ?? pb.data(forType: .tiff)
+            guard let imgData = rawData, imgData.count <= Self.maxImageBytes,
+                  let rep = NSBitmapImageRep(data: imgData),
+                  let pngData = rep.representation(using: .png, properties: [:]) else {
+                return
+            }
+            guard pngData.count <= Self.maxImageBytes else { return }
+
+            let hash = Self.sha256Hex(pngData)
+            if let existingIdx = latestEntries.firstIndex(where: { $0.kind == .image && $0.contentHash == hash }) {
+                var bumped = latestEntries.remove(at: existingIdx)
+                bumped.createdAt = Date()
+                latestEntries.insert(bumped, at: 0)
+                sortEntriesInPlace(&latestEntries)
+                if isUIActive { publishToUI() }
+                persistHistoryAsync()
+                return
+            }
+
+            let fileName = "\(UUID().uuidString).png"
+            let targetURL = imagesDirURL.appendingPathComponent(fileName)
+            let dirURL = imagesDirURL
+            ioQueue.async {
+                try? FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+                try? pngData.write(to: targetURL, options: .atomic)
+                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: targetURL.path)
+            }
+
+            let entry = ClipboardEntry(
+                kind: .image,
+                imageFileName: fileName,
+                imageWidth: rep.pixelsWide,
+                imageHeight: rep.pixelsHigh,
+                contentHash: hash,
+                sourceAppName: appName,
+                sourceBundleID: bundleID
+            )
+            insertOrBumpEntry(entry)
+        }
+    }
+
+    private func insertOrBumpEntry(_ incoming: ClipboardEntry) {
+        if let existingIdx = latestEntries.firstIndex(where: { $0.kind == incoming.kind && $0.contentHash == incoming.contentHash }) {
+            var bumped = latestEntries.remove(at: existingIdx)
+            bumped.createdAt = Date()
+            latestEntries.insert(bumped, at: 0)
+        } else {
+            latestEntries.insert(incoming, at: 0)
+        }
+
+        sortEntriesInPlace(&latestEntries)
+        enforceRetentionLimits()
+
+        if isUIActive {
+            publishToUI()
+        }
+        persistHistoryAsync()
+    }
+
+    private func trimAndPersist() {
+        enforceRetentionLimits()
+        if isUIActive {
+            publishToUI()
+        }
+        persistHistoryAsync()
+    }
+
+    private func enforceRetentionLimits() {
+        var pinned = latestEntries.filter(\.isPinned)
+        var unpinned = latestEntries.filter { !$0.isPinned }
+
+        let maxUnpinned = max(1, maxHistoryCount)
+        if unpinned.count > maxUnpinned {
+            let dropped = unpinned.suffix(from: maxUnpinned)
+            for item in dropped {
+                if let fileName = item.imageFileName {
+                    removeImageFileAsync(fileName)
+                }
+            }
+            unpinned = Array(unpinned.prefix(maxUnpinned))
+        }
+
+        // Cap total stored unpinned images to prevent unbounded disk/RAM growth
+        var imageCount = pinned.filter { $0.kind == .image }.count
+        var filteredUnpinned: [ClipboardEntry] = []
+        filteredUnpinned.reserveCapacity(unpinned.count)
+        for item in unpinned {
+            if item.kind == .image {
+                if imageCount < Self.maxStoredImages {
+                    imageCount += 1
+                    filteredUnpinned.append(item)
+                } else if let fileName = item.imageFileName {
+                    removeImageFileAsync(fileName)
+                }
+            } else {
+                filteredUnpinned.append(item)
+            }
+        }
+
+        pinned.sort { $0.createdAt > $1.createdAt }
+        filteredUnpinned.sort { $0.createdAt > $1.createdAt }
+        latestEntries = pinned + filteredUnpinned
+    }
+
+    private func sortEntriesInPlace(_ list: inout [ClipboardEntry]) {
+        list.sort { a, b in
+            if a.isPinned != b.isPinned { return a.isPinned }
+            return a.createdAt > b.createdAt
+        }
+    }
+
+    private func publishToUI() {
+        entries = latestEntries
+    }
+
+    // MARK: - Local Encrypted-Permission Persistence (0600)
+
+    private func loadPersistedHistory() {
+        guard let data = try? Data(contentsOf: historyFileURL),
+              let decoded = try? JSONDecoder().decode([ClipboardEntry].self, from: data) else {
+            return
+        }
+        latestEntries = decoded
+        sortEntriesInPlace(&latestEntries)
+        enforceRetentionLimits()
+        entries = latestEntries
+    }
+
+    private func persistHistoryAsync() {
+        let snapshot = latestEntries
+        let dir = storageDirURL
+        let file = historyFileURL
+        ioQueue.async {
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let data = try JSONEncoder().encode(snapshot)
+                try data.write(to: file, options: .atomic)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            } catch {}
+        }
+    }
+
+    private func removeImageFileAsync(_ fileName: String) {
+        thumbnailCache.removeObject(forKey: fileName as NSString)
+        let url = imagesDirURL.appendingPathComponent(fileName)
+        ioQueue.async {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private static func sha256Hex(_ data: Data) -> String {
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func sendCommandVKeystroke() {
+        guard let src = CGEventSource(stateID: .combinedSessionState) else { return }
+        let vKey = CGKeyCode(kVK_ANSI_V)
+        if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: true),
+           let keyUp = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: false) {
+            keyDown.flags = .maskCommand
+            keyUp.flags = .maskCommand
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+        }
+    }
+}

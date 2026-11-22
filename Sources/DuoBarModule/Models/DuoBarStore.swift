@@ -12,6 +12,7 @@ public enum PopoverPage: Equatable {
     case display
     case keepAwake
     case scrollReverser
+    case clipboard
     case settings
 }
 

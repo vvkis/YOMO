@@ -5,6 +5,7 @@ import DisplayHiDPIModule
 import KeepAwakeModule
 import AudioBluetoothModule
 import ScrollReverserModule
+import ClipboardModule
 
 public enum ConsoleSection: String, CaseIterable, Identifiable {
     case dashboard = "dashboard"
@@ -13,6 +14,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
     case hidpi = "hidpi"
     case keepAwake = "keepAwake"
     case scrollReverser = "scrollReverser"
+    case clipboard = "clipboard"
 
     public var id: String { rawValue }
 
@@ -24,6 +26,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
         case .hidpi: return "显示器 / HiDPI"
         case .keepAwake: return "防休眠"
         case .scrollReverser: return "鼠标滚轮翻转"
+        case .clipboard: return "历史剪贴板"
         }
     }
 
@@ -35,6 +38,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
         case .hidpi: return "display"
         case .keepAwake: return "cup.and.saucer"
         case .scrollReverser: return "computermouse"
+        case .clipboard: return "doc.on.clipboard"
         }
     }
 }
@@ -52,6 +56,7 @@ struct HubConsoleView: View {
     @ObservedObject var keepAwakeStore: KeepAwakeStore
     @ObservedObject var audioBluetoothStore: AudioBluetoothStore
     @ObservedObject var scrollReverserStore: ScrollReverserStore
+    @ObservedObject var clipboardStore: ClipboardStore
 
     var body: some View {
         NavigationSplitView {
@@ -72,6 +77,7 @@ struct HubConsoleView: View {
                         keepAwakeStore: keepAwakeStore,
                         audioBluetoothStore: audioBluetoothStore,
                         scrollReverserStore: scrollReverserStore,
+                        clipboardStore: clipboardStore,
                         onSelect: { viewModel.selectedSection = $0 }
                     )
                 case .duobar:
@@ -84,6 +90,8 @@ struct HubConsoleView: View {
                     KeepAwakeConsoleView(store: keepAwakeStore, moduleSettings: moduleSettings)
                 case .scrollReverser:
                     ScrollReverserConsoleView(store: scrollReverserStore, moduleSettings: moduleSettings)
+                case .clipboard:
+                    ClipboardConsoleView(store: clipboardStore, moduleSettings: moduleSettings)
                 }
             }
             .navigationTitle(viewModel.selectedSection.title)
@@ -99,6 +107,7 @@ private struct DashboardHomeView: View {
     @ObservedObject var keepAwakeStore: KeepAwakeStore
     @ObservedObject var audioBluetoothStore: AudioBluetoothStore
     @ObservedObject var scrollReverserStore: ScrollReverserStore
+    @ObservedObject var clipboardStore: ClipboardStore
     let onSelect: (ConsoleSection) -> Void
 
     var body: some View {
@@ -174,6 +183,23 @@ private struct DashboardHomeView: View {
                             }
                         ),
                         onOpen: { onSelect(.scrollReverser) }
+                    )
+
+                    // Module 6: Clipboard History
+                    ModuleSummaryCard(
+                        icon: "doc.on.clipboard.fill",
+                        tint: .cyan,
+                        title: "历史剪贴板",
+                        subtitle: clipboardStore.totalCount > 0 ? "已保存 \(clipboardStore.totalCount) 条 · ⇧⌘V 唤出" : "等待复制记录 · ⇧⌘V 唤出",
+                        statusText: moduleSettings.clipboardEnabled ? "已启用" : "已停用",
+                        isOn: Binding(
+                            get: { moduleSettings.clipboardEnabled },
+                            set: { enabled in
+                                moduleSettings.clipboardEnabled = enabled
+                                clipboardStore.syncWithModuleEnabled(enabled)
+                            }
+                        ),
+                        onOpen: { onSelect(.clipboard) }
                     )
                 }
             }

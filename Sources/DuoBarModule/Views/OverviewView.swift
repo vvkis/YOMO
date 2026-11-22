@@ -4,6 +4,7 @@ import DisplayHiDPIModule
 import KeepAwakeModule
 import AudioBluetoothModule
 import ScrollReverserModule
+import ClipboardModule
 
 struct OverviewView: View {
     @ObservedObject var store: DuoBarStore
@@ -13,6 +14,7 @@ struct OverviewView: View {
     @ObservedObject var keepAwakeStore: KeepAwakeStore
     @ObservedObject var audioBluetoothStore: AudioBluetoothStore
     @ObservedObject var scrollReverserStore: ScrollReverserStore
+    @ObservedObject var clipboardStore: ClipboardStore
     let onNavigate: (PopoverPage) -> Void
     let onOpenConsole: () -> Void
     let onQuit: () -> Void
@@ -21,6 +23,7 @@ struct OverviewView: View {
     @StateObject private var hidpiHover = HoverTracker()
     @StateObject private var awakeHover = HoverTracker()
     @StateObject private var scrollHover = HoverTracker()
+    @StateObject private var clipHover = HoverTracker()
     @StateObject private var telemetryHover = HoverTracker()
 
     var body: some View {
@@ -297,6 +300,66 @@ struct OverviewView: View {
                     .help("滚轮翻转详细设置")
                 }
                 .glassBentoCard(cornerRadius: 15)
+            }
+
+            // 2b. Compact Clipboard History Entry Card (live latest preview + count badge)
+            if moduleSettings.clipboardEnabled {
+                Button {
+                    onNavigate(.clipboard)
+                } label: {
+                    HStack(spacing: 9) {
+                        GlassNeutralCircle(size: 28) {
+                            Image(systemName: "doc.on.clipboard")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.primary)
+                        }
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(spacing: 5) {
+                                Text("历史剪贴板")
+                                    .font(.system(size: 12.5, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                if clipboardStore.globalHotkeyEnabled {
+                                    Text("⇧⌘V")
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 4.5)
+                                        .padding(.vertical, 1)
+                                        .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                                }
+                            }
+                            Text(clipboardStore.latestPreviewSubtitle)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.primary.opacity(0.68))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+
+                        Spacer(minLength: 4)
+
+                        if clipboardStore.totalCount > 0 {
+                            Text("\(clipboardStore.totalCount)")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color.primary.opacity(0.08)))
+                        }
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .glassBentoCard(cornerRadius: 15)
+                    .opacity(clipHover.isHovering ? 0.92 : 1.0)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { clipHover.isHovering = $0 }
             }
 
             // 3. Tactile Control Center Volume Scrubber

@@ -32,6 +32,9 @@ public final class ModuleSettings: ObservableObject {
     @AppStorage("module.scrollreverser.enabled") public var scrollReverserEnabled: Bool = true {
         willSet { objectWillChange.send() }
     }
+    @AppStorage("module.clipboard.enabled") public var clipboardEnabled: Bool = true {
+        willSet { objectWillChange.send() }
+    }
     @AppStorage("glass.appearance") public var glassAppearanceRaw: String = GlassAppearanceMode.dark.rawValue {
         willSet { objectWillChange.send() }
     }

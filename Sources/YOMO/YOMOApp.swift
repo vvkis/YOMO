@@ -7,6 +7,7 @@ import DisplayHiDPIModule
 import KeepAwakeModule
 import AudioBluetoothModule
 import ScrollReverserModule
+import ClipboardModule
 
 @main
 struct YOMOLauncher {
@@ -48,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var keepAwakeStore: KeepAwakeStore!
     private var audioBluetoothStore: AudioBluetoothStore!
     private var scrollReverserStore: ScrollReverserStore!
+    private var clipboardStore: ClipboardStore!
 
     private var eventMonitor: Any?
     private var lastRenderKey: BadgeRenderKey?
@@ -62,6 +64,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         audioBluetoothStore = AudioBluetoothStore()
         scrollReverserStore = ScrollReverserStore()
         scrollReverserStore.syncWithModuleEnabled(moduleSettings.scrollReverserEnabled)
+        clipboardStore = ClipboardStore()
+        clipboardStore.onGlobalHotKeyPressed = { [weak self] in
+            self?.toggleClipboardFromHotKey()
+        }
+        clipboardStore.syncWithModuleEnabled(moduleSettings.clipboardEnabled)
 
         // 1. Setup single Menu Bar Status Item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -89,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keepAwakeStore: keepAwakeStore,
             audioBluetoothStore: audioBluetoothStore,
             scrollReverserStore: scrollReverserStore,
+            clipboardStore: clipboardStore,
             onDismiss: {
                 panelRef?.dismissAnimated()
             },
@@ -98,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onQuit: { [weak self] in
                 self?.keepAwakeStore.deactivate()
                 self?.scrollReverserStore.deactivate(persistPreference: false)
+                self?.clipboardStore.stop()
                 NSApp.terminate(nil)
             }
         )
@@ -137,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DistributedNotificationCenter.default().removeObserver(self)
         keepAwakeStore?.deactivate()
         scrollReverserStore?.deactivate(persistPreference: false)
+        clipboardStore?.stop()
     }
 
     private func setupMainMenu() {
@@ -245,6 +255,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if moduleSettings.scrollReverserEnabled {
                 scrollReverserStore.refreshPermissionState()
             }
+            if moduleSettings.clipboardEnabled {
+                clipboardStore.setUIActive(true)
+            }
+            button.highlight(true)
+            panel.show(relativeTo: button)
+            startOutsideClickMonitor()
+        }
+    }
+
+    private func toggleClipboardFromHotKey() {
+        guard moduleSettings.clipboardEnabled, let button = statusItem.button else { return }
+
+        if panel.isVisible && duoBarStore.currentPage == .clipboard {
+            panel.dismissAnimated()
+            return
+        }
+
+        duoBarStore.onPopoverOpened()
+        clipboardStore.setUIActive(true)
+        duoBarStore.navigate(to: .clipboard)
+
+        if !panel.isVisible {
             button.highlight(true)
             panel.show(relativeTo: button)
             startOutsideClickMonitor()
@@ -255,6 +287,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.highlight(false)
         stopOutsideClickMonitor()
         duoBarStore.resetNavigation()
+        clipboardStore.searchQuery = ""
+        clipboardStore.setUIActive(consoleWindow?.isVisible == true)
     }
 
     private func openHubConsole(sectionKey: String?) {
@@ -275,7 +309,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 displayStore: displayStore,
                 keepAwakeStore: keepAwakeStore,
                 audioBluetoothStore: audioBluetoothStore,
-                scrollReverserStore: scrollReverserStore
+                scrollReverserStore: scrollReverserStore,
+                clipboardStore: clipboardStore
             )
             let win = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 760, height: 500),
@@ -300,12 +335,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     self?.duoBarStore.setConsoleOpen(false)
+                    if self?.panel.isVisible != true {
+                        self?.clipboardStore.setUIActive(false)
+                    }
                 }
             }
             consoleWindow = win
         }
 
         duoBarStore.setConsoleOpen(true)
+        clipboardStore.setUIActive(true)
         NSApp.activate()
         consoleWindow?.makeKeyAndOrderFront(nil)
     }

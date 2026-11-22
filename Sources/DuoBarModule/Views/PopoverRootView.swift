@@ -4,6 +4,7 @@ import DisplayHiDPIModule
 import KeepAwakeModule
 import AudioBluetoothModule
 import ScrollReverserModule
+import ClipboardModule
 
 public struct PopoverRootView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -13,6 +14,7 @@ public struct PopoverRootView: View {
     @ObservedObject public var keepAwakeStore: KeepAwakeStore
     @ObservedObject public var audioBluetoothStore: AudioBluetoothStore
     @ObservedObject public var scrollReverserStore: ScrollReverserStore
+    @ObservedObject public var clipboardStore: ClipboardStore
     public let onDismiss: () -> Void
     public let onOpenConsole: (String?) -> Void
     public let onQuit: () -> Void
@@ -24,6 +26,7 @@ public struct PopoverRootView: View {
         keepAwakeStore: KeepAwakeStore,
         audioBluetoothStore: AudioBluetoothStore,
         scrollReverserStore: ScrollReverserStore,
+        clipboardStore: ClipboardStore,
         onDismiss: @escaping () -> Void,
         onOpenConsole: @escaping (String?) -> Void,
         onQuit: @escaping () -> Void
@@ -34,6 +37,7 @@ public struct PopoverRootView: View {
         self.keepAwakeStore = keepAwakeStore
         self.audioBluetoothStore = audioBluetoothStore
         self.scrollReverserStore = scrollReverserStore
+        self.clipboardStore = clipboardStore
         self.onDismiss = onDismiss
         self.onOpenConsole = onOpenConsole
         self.onQuit = onQuit
@@ -67,6 +71,7 @@ public struct PopoverRootView: View {
                         keepAwakeStore: keepAwakeStore,
                         audioBluetoothStore: audioBluetoothStore,
                         scrollReverserStore: scrollReverserStore,
+                        clipboardStore: clipboardStore,
                         onNavigate: { target in
                             withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
                                 store.navigate(to: target)
@@ -108,6 +113,15 @@ public struct PopoverRootView: View {
                 case .scrollReverser:
                     ScrollReverserPopoverView(store: scrollReverserStore, onBack: goBack)
                         .transition(pageTransition)
+
+                case .clipboard:
+                    ClipboardPopoverView(
+                        store: clipboardStore,
+                        onBack: goBack,
+                        onItemCopied: onDismiss,
+                        onOpenConsole: { onOpenConsole("clipboard") }
+                    )
+                    .transition(pageTransition)
 
                 case .settings:
                     SettingsDetailView(store: store, prefs: store.prefs, moduleSettings: moduleSettings, onBack: goBack)
