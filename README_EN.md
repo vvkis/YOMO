@@ -222,6 +222,30 @@ Every extension module can be enabled or disabled independently in **Hub Console
 
 ---
 
+### 7. Keyboard Lock (Cleaning Mode)
+
+<table>
+  <tr>
+    <td width="46%" align="center">
+      <img src="docs/screenshots/console-keyboard-lock.png" alt="Keyboard Lock Console" width="340" />
+    </td>
+    <td width="54%" valign="top">
+      <p><b>Highlights</b></p>
+      <ul>
+        <li><b>Blocks All Keys &amp; Media Keys</b>: Uses a native Quartz <code>CGEventTap</code> to swallow all keyboard input plus top-row media/function keys (brightness, volume, playback) while keeping your mouse and trackpad fully usable.</li>
+        <li><b>Fail-Safe Unlocking</b>: Unlock anytime via the floating bottom HUD pill, the YOMO popover button, or the emergency chord <code>⌃⌥⌘U</code>; automatically unlocks on Mac sleep or app exit.</li>
+        <li><b>Zero Idle Overhead</b>: Completely tears down the event tap when unlocked (0% CPU) and shares Accessibility permission with Mouse Scroll Reverser.</li>
+      </ul>
+      <p><b>Example</b></p>
+      <blockquote>
+        Need to wipe down your MacBook keyboard—or keep a cat from typing across your open editor? Click the Keyboard Lock button in YOMO, clean freely, then click the bottom unlock HUD or press <code>⌃⌥⌘U</code>.
+      </blockquote>
+    </td>
+  </tr>
+</table>
+
+---
+
 ### Appearance & Customization
 
 <table>
@@ -246,7 +270,7 @@ Every extension module can be enabled or disabled independently in **Hub Console
 
 ### Option 1: Download Release DMG (Recommended)
 
-1. Download **`YOMO-v1.2.0.dmg`** from the [Releases page](https://github.com/vvkis/YOMO/releases) (clean **`YOMO-v1.2.0-source.zip`** and `SHA256SUMS.txt` are also provided).
+1. Download **`YOMO-v1.3.0.dmg`** from the [Releases page](https://github.com/vvkis/YOMO/releases) (clean **`YOMO-v1.3.0-source.zip`** and `SHA256SUMS.txt` are also provided).
 2. Open the `.dmg` and drag **`YOMO.app`** into **`Applications`**.
 3. Launch **YOMO**, open **Appearance & Style**, and enable **Launch at Login**.
 
@@ -281,7 +305,7 @@ open dist/YOMO.app
 
 # 3. (Optional) Build Release DMG + clean source ZIP + SHA256 checksums
 ./scripts/build-release.sh
-# Outputs: dist/YOMO-v1.2.0.dmg, dist/YOMO-v1.2.0-source.zip, dist/SHA256SUMS.txt
+# Outputs: dist/YOMO-v1.3.0.dmg, dist/YOMO-v1.3.0-source.zip, dist/SHA256SUMS.txt
 ```
 
 ### Permissions
@@ -292,7 +316,7 @@ YOMO is **100% offline** with zero telemetry or network calls. Optional macOS pe
 | :--- | :--- | :--- |
 | **Location Services** | macOS 14+ requires Location access to read the current Wi-Fi SSID and scan nearby networks | Optional (signal bars & network speeds still work without it) |
 | **Bluetooth** | Read paired Bluetooth status, AirPods battery levels, and toggle connections | Only when using the Bluetooth module |
-| **Accessibility** | Intercept and reverse discrete external mouse wheel scroll events (leaves trackpad gestures untouched) | Only when using the Mouse Scroll Reverser module |
+| **Accessibility** | Reverse external mouse wheel scrolling (leaves trackpad untouched) or lock keyboard input in Cleaning Mode | Only when using Mouse Scroll Reverser or Keyboard Lock |
 
 ---
 

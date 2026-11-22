@@ -16,7 +16,7 @@
 
 **简体中文** · [English](README_EN.md)
 
-[核心特性](#为什么选择-yomo) · [菜单栏样式](#菜单栏状态徽章) · [模块与示例](#六大核心模块与使用示例) · [快速开始](#快速开始) · [常见问题](#常见问题)
+[核心特性](#为什么选择-yomo) · [菜单栏样式](#菜单栏状态徽章) · [模块与示例](#七大核心模块与使用示例) · [快速开始](#快速开始) · [常见问题](#常见问题)
 
 <br />
 
@@ -71,7 +71,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ---
 
-## 六大核心模块与使用示例
+## 七大核心模块与使用示例
 
 所有扩展模块均可在「**控制台 → 模块总览**」中独立开关。不需要的模块关闭后不会参与面板渲染或刷新。
 
@@ -222,6 +222,30 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ---
 
+### 7. 键盘锁（清洁模式防误触）
+
+<table>
+  <tr>
+    <td width="46%" align="center">
+      <img src="docs/screenshots/console-keyboard-lock.png" alt="键盘锁控制台界面" width="340" />
+    </td>
+    <td width="54%" valign="top">
+      <p><b>核心能力</b></p>
+      <ul>
+        <li><b>全按键 + 媒体键拦截</b>：基于底层 Quartz <code>CGEventTap</code> 一键拦截所有键盘按键与顶部功能/媒体键（亮度、音量、播放等），鼠标与触控板始终保持可用。</li>
+        <li><b>多道安全解锁保险</b>：支持点击屏幕底部「解锁」悬浮条 HUD、再次点击 YOMO 主面板「键盘锁」按钮、或紧急快捷键 <code>⌃⌥⌘U</code> 强制解锁；Mac 休眠或退出应用时自动解除锁定，绝不锁死系统。</li>
+        <li><b>零后台开销</b>：未锁定时彻底卸载事件监听（0% CPU 占用），与「鼠标滚轮翻转」共享辅助功能权限。</li>
+      </ul>
+      <p><b>使用示例</b></p>
+      <blockquote>
+        想擦拭 MacBook 键盘灰尘，或防止家里的猫咪踩键盘乱发消息？点一下 YOMO 主浮窗里的「键盘锁」图标即可放心清理，擦完点底部悬浮条或按 <code>⌃⌥⌘U</code> 秒解锁。
+      </blockquote>
+    </td>
+  </tr>
+</table>
+
+---
+
 ### 外观与个性化设置
 
 <table>
@@ -246,7 +270,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ### 方式一：直接下载 Release 安装包（推荐）
 
-1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.2.0.dmg`**（同时提供 **`YOMO-v1.2.0-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
+1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.3.0.dmg`**（同时提供 **`YOMO-v1.3.0-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
 2. 双击打开 `.dmg`，将 **`YOMO.app`** 拖入 **`Applications`（应用程序）** 文件夹。
 3. 打开 **YOMO**，在浮窗底部点击 **「外观与样式」→ 开启「开机自动启动」**，即可随系统静默常驻。
 
@@ -281,7 +305,7 @@ open dist/YOMO.app
 
 # 3.（可选）一键生成 DMG 安装包 + 干净源码 ZIP + SHA256 校验文件
 ./scripts/build-release.sh
-# 产物输出至 dist/YOMO-v1.2.0.dmg、dist/YOMO-v1.2.0-source.zip、dist/SHA256SUMS.txt
+# 产物输出至 dist/YOMO-v1.3.0.dmg、dist/YOMO-v1.3.0-source.zip、dist/SHA256SUMS.txt
 ```
 
 ### 首次运行权限说明
@@ -292,7 +316,7 @@ YOMO 为 **100% 本地离线应用**，不包含任何遥测上报或网络请�
 | :--- | :--- | :--- |
 | **定位服务（Location）** | macOS 14+ 要求定位权限才能读取当前 Wi-Fi 名称（SSID）与扫描附近网络 | 可选（不授权仍可正常查看信号强度与网速） |
 | **蓝牙（Bluetooth）** | 读取已配对蓝牙设备状态与 AirPods 电量、执行一键连断 | 使用蓝牙模块时需要 |
-| **辅助功能（Accessibility）** | 监听并翻转外接鼠标滚轮事件（不影响触控板手势） | 仅使用「鼠标滚轮翻转」模块时需要 |
+| **辅助功能（Accessibility）** | 翻转外接鼠标滚轮事件（不影响触控板），或清洁模式锁定键盘按键 | 仅使用「鼠标滚轮翻转」或「键盘锁」模块时需要 |
 
 ---
 
