@@ -50,21 +50,22 @@ struct OverviewView: View {
     private let gridTotalWidth: CGFloat = 290
     private let gridSpacing: CGFloat = 8
 
-    /// Computes exact 4-column Bento Grid coordinates using First-Fit Row Packing:
-    /// small tiles automatically fill available gaps in earlier partial rows (e.g. a 1x tile next to a 3x tile)
-    /// instead of leaving dead empty holes when a 4x full-width tile is dragged between them.
+    /// Computes exact 4-column Bento Grid coordinates using Sequential Row Packing:
+    /// respects the user's exact tile order (so dragging a small tile below a full-width row never
+    /// teleports it back up into an earlier gap), while `findTargetDrop` snaps small tiles cleanly
+    /// into any partial row's right-hand empty slot when deliberately dragged there.
     private var gridLayout: BentoGridLayout {
         let activeTiles = moduleSettings.enabledOverviewTiles
         let colUnit = (gridTotalWidth - gridSpacing * 3.0) / 4.0 // 66.5pt per column
 
-        // 1. First-Fit Row Packing into 4-column rows
+        // 1. Sequential Row Packing into 4-column rows (visual order == logical order 1:1)
         var rows: [(items: [(tile: OverviewTileID, span: Int)], usedCols: Int)] = []
 
         for tile in activeTiles {
             let span = min(4, max(1, moduleSettings.colSpan(for: tile)))
-            if let fitRowIdx = rows.firstIndex(where: { $0.usedCols + span <= 4 }) {
-                rows[fitRowIdx].items.append((tile, span))
-                rows[fitRowIdx].usedCols += span
+            if let lastIdx = rows.indices.last, rows[lastIdx].usedCols + span <= 4 {
+                rows[lastIdx].items.append((tile, span))
+                rows[lastIdx].usedCols += span
             } else {
                 rows.append((items: [(tile, span)], usedCols: span))
             }
@@ -264,7 +265,8 @@ struct OverviewView: View {
                                             y: moduleSettings.dragOriginFrame.midY + value.translation.height
                                         )
                                         let now = Date().timeIntervalSinceReferenceDate
-                                        if let drop = findTargetDrop(at: currentCenter, excluding: tile, in: layout) {
+                                        if let drop = findTargetDrop(at: currentCenter, excluding: tile, in: layout),
+                                           wouldMoveChangeOrder(from: tile, to: drop.target, placeAfter: drop.placeAfter) {
                                             let isCoolingDown = (drop.target == moduleSettings.lastSwapTarget)
                                                 && (now - moduleSettings.lastSwapTime < 0.18)
                                             if !isCoolingDown {
@@ -393,36 +395,91 @@ struct OverviewView: View {
         }
     }
 
+    private func wouldMoveChangeOrder(
+        from source: OverviewTileID,
+        to target: OverviewTileID,
+        placeAfter: Bool?
+    ) -> Bool {
+        let order = moduleSettings.overviewTileOrder
+        guard source != target,
+              let fromIdx = order.firstIndex(of: source),
+              let toIdx = order.firstIndex(of: target) else {
+            return false
+        }
+        var simulated = order
+        let item = simulated.remove(at: fromIdx)
+        if let placeAfter {
+            if let newTargetIdx = simulated.firstIndex(of: target) {
+                let insertIdx = placeAfter ? min(simulated.count, newTargetIdx + 1) : newTargetIdx
+                simulated.insert(item, at: insertIdx)
+            } else {
+                simulated.insert(item, at: toIdx)
+            }
+        } else {
+            simulated.insert(item, at: toIdx)
+        }
+        return simulated != order
+    }
+
     private func findTargetDrop(
         at point: CGPoint,
         excluding dragged: OverviewTileID,
         in layout: BentoGridLayout
     ) -> (target: OverviewTileID, placeAfter: Bool?)? {
+        let draggedSpan = layout.spans[dragged] ?? moduleSettings.colSpan(for: dragged)
+        let draggedRect = layout.frames[dragged]
+
         // 1. Direct hit on an existing tile's core region
         for (tile, rect) in layout.frames where tile != dragged {
             let hitBox = rect.insetBy(dx: rect.width * 0.12, dy: rect.height * 0.12)
             if hitBox.contains(point) {
+                // Same-row horizontal drag: use explicit directional placement for crisp left/right swaps
+                if let dRect = draggedRect, abs(dRect.midY - rect.midY) < 4 {
+                    return (target: tile, placeAfter: point.x > rect.midX)
+                }
+                // Cross-row hit on a partial row's trailing tile: allow snapping right beside it if it fits
+                if let band = layout.rowBands.first(where: { $0.tiles.contains(tile) }) {
+                    let otherTiles = band.tiles.filter { $0 != dragged }
+                    let otherCols = otherTiles.reduce(0) { $0 + (layout.spans[$1] ?? $1.defaultColSpan) }
+                    if otherTiles.last == tile && (otherCols + draggedSpan <= 4) && point.x > rect.midX {
+                        return (target: tile, placeAfter: true)
+                    }
+                }
                 return (target: tile, placeAfter: nil)
             }
         }
 
-        // 2. Empty right-hand slot on a partial row (e.g. dragging 1x Keyboard Lock into the empty 1-col gap next to 3x Scroll Reverser)
+        // 2. Empty right/left slot on a partial row (with half-spacing vertical tolerance across row seams)
+        let seamHalf = gridSpacing * 0.5
         for band in layout.rowBands {
-            if point.y >= band.minY && point.y <= band.maxY {
+            if point.y >= (band.minY - seamHalf) && point.y <= (band.maxY + seamHalf) {
                 let rowOtherTiles = band.tiles.filter { $0 != dragged }
-                guard let lastTile = rowOtherTiles.last,
+                guard let firstTile = rowOtherTiles.first,
+                      let lastTile = rowOtherTiles.last,
+                      let firstRect = layout.frames[firstTile],
                       let lastRect = layout.frames[lastTile] else {
                     continue
                 }
-                if point.x > lastRect.midX {
-                    return (target: lastTile, placeAfter: true)
-                } else if let firstTile = rowOtherTiles.first,
-                          let firstRect = layout.frames[firstTile],
-                          point.x < firstRect.midX {
-                    return (target: firstTile, placeAfter: false)
+                let otherCols = rowOtherTiles.reduce(0) { $0 + (layout.spans[$1] ?? $1.defaultColSpan) }
+                if otherCols + draggedSpan <= 4 {
+                    if point.x > lastRect.midX {
+                        return (target: lastTile, placeAfter: true)
+                    } else if point.x < firstRect.midX {
+                        return (target: firstTile, placeAfter: false)
+                    }
                 }
             }
         }
+
+        // 3. Dragged past top or bottom edge of the canvas
+        if point.y < 0, let first = layout.visualOrder.first, first != dragged {
+            return (target: first, placeAfter: false)
+        }
+        if let lastBand = layout.rowBands.last, point.y > lastBand.maxY,
+           let last = layout.visualOrder.last, last != dragged {
+            return (target: last, placeAfter: true)
+        }
+
         return nil
     }
 

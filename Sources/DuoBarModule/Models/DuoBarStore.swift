@@ -82,6 +82,8 @@ public final class DuoBarStore: ObservableObject {
     private var isSamplingPorts = false
     private var pendingKillResetWork: DispatchWorkItem?
     private var portFeedbackResetWork: DispatchWorkItem?
+    private var pendingBatteryRefreshWork: DispatchWorkItem?
+    private var pendingWiFiRefreshWork: DispatchWorkItem?
     private var lastWiFiEventSampleTime: TimeInterval = 0
     private var lastBatteryEventSampleTime: TimeInterval = 0
     private var lastRefreshInterval: Double = 0
@@ -255,16 +257,32 @@ public final class DuoBarStore: ObservableObject {
     }
 
     private func refreshBatteryState(throttled: Bool = false) {
-        guard !isScreenAsleep, !isSamplingBattery else { return }
+        guard !isScreenAsleep else { return }
         let now = Date().timeIntervalSinceReferenceDate
-        if throttled && (now - lastBatteryEventSampleTime) < 0.45 {
+        let elapsed = now - lastBatteryEventSampleTime
+        if isSamplingBattery || (throttled && elapsed < 0.45) {
+            // Trailing-edge coalescing: NEVER silently drop the final settled state during a
+            // MagSafe/USB-C plug-in burst (1st event often has IsCharging=0, 2nd has IsCharging=1 ~200ms later).
+            let delay = isSamplingBattery ? 0.25 : max(0.15, 0.45 - elapsed)
+            pendingBatteryRefreshWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.refreshBatteryState(throttled: false)
+                }
+            }
+            pendingBatteryRefreshWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
             return
         }
+
+        pendingBatteryRefreshWork?.cancel()
+        pendingBatteryRefreshWork = nil
         isSamplingBattery = true
         lastBatteryEventSampleTime = now
 
         let batSvc = batteryService
         let prevBat = latestBattery
+        let wasPluggedIn = prevBat.isPluggedIn
         let detailed = isUIActive
         telemetryQueue.async { [weak self] in
             let bat = batSvc.sampleBattery(includeDetailedIORegistry: detailed, previous: prevBat)
@@ -276,16 +294,42 @@ public final class DuoBarStore: ObservableObject {
                     self.battery = bat
                 }
                 self.onStatusBarNeedsRedraw?()
+
+                // If power adapter was just plugged in and USB-PD negotiation hasn't enabled charging yet,
+                // schedule one lightweight trailing check so the charging bolt appears immediately once PD settles.
+                if !wasPluggedIn && bat.isPluggedIn && !bat.isCharging && !bat.isCharged {
+                    self.pendingBatteryRefreshWork?.cancel()
+                    let followUp = DispatchWorkItem { [weak self] in
+                        Task { @MainActor [weak self] in
+                            self?.refreshBatteryState(throttled: false)
+                        }
+                    }
+                    self.pendingBatteryRefreshWork = followUp
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: followUp)
+                }
             }
         }
     }
 
     private func refreshWiFiQuickState(throttled: Bool = false) {
-        guard !isScreenAsleep, !isSamplingWiFi else { return }
+        guard !isScreenAsleep else { return }
         let now = Date().timeIntervalSinceReferenceDate
-        if throttled && (now - lastWiFiEventSampleTime) < 0.50 {
+        let elapsed = now - lastWiFiEventSampleTime
+        if isSamplingWiFi || (throttled && elapsed < 0.50) {
+            let delay = isSamplingWiFi ? 0.25 : max(0.15, 0.50 - elapsed)
+            pendingWiFiRefreshWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.refreshWiFiQuickState(throttled: false)
+                }
+            }
+            pendingWiFiRefreshWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
             return
         }
+
+        pendingWiFiRefreshWork?.cancel()
+        pendingWiFiRefreshWork = nil
         isSamplingWiFi = true
         lastWiFiEventSampleTime = now
 

@@ -24,6 +24,7 @@ struct YOMOLauncher {
 private struct BadgeRenderKey: Equatable {
     let batteryPct: Int
     let isCharging: Bool
+    let isPluggedIn: Bool
     let isLPM: Bool
     let wifiOn: Bool
     let wifiBars: Int
@@ -217,6 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let key = BadgeRenderKey(
             batteryPct: bat.percentage,
             isCharging: bat.isCharging,
+            isPluggedIn: bat.isPluggedIn,
             isLPM: bat.isLowPowerMode,
             wifiOn: wifi.isPoweredOn,
             wifiBars: wifi.signalBars,

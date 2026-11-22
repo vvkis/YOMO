@@ -15,6 +15,21 @@ public enum StatusBadgeRenderer {
     private static let bottomValueFont = NSFont.monospacedDigitSystemFont(ofSize: 9.8, weight: .semibold)
     private static let bottomUnitFont = NSFont.systemFont(ofSize: 8.4, weight: .bold)
 
+    /// Condensed bold monospaced-digit SF Pro for the open-top battery ring so digits read crisply
+    /// as real numbers while keeping the ring compact and the top arc gap rock-steady.
+    private static let openRingTwoDigitFont: NSFont = makeCondensedMonoBoldFont(size: 8.3)
+    private static let openRingThreeDigitFont: NSFont = makeCondensedMonoBoldFont(size: 7.4)
+
+    private static func makeCondensedMonoBoldFont(size: CGFloat) -> NSFont {
+        let base = NSFont.systemFont(ofSize: size, weight: .bold, width: .condensed)
+        let monoFeature: [NSFontDescriptor.FeatureKey: Any] = [
+            .typeIdentifier: kNumberSpacingType,
+            .selectorIdentifier: kMonospacedNumbersSelector
+        ]
+        let desc = base.fontDescriptor.addingAttributes([.featureSettings: [monoFeature]])
+        return NSFont(descriptor: desc, size: size) ?? base
+    }
+
     /// Invariant compact width reserving worst-case bounds ("100%" / "↓ 999 M") so left-aligned text
     /// sits flush to the right canvas edge with zero wasted trailing gap and zero horizontal jitter.
     private static let fixedCapsuleWidth: CGFloat = {
@@ -188,12 +203,12 @@ public enum StatusBadgeRenderer {
                         percentage: battery.percentage,
                         track: trackColor,
                         ringColor: batColor,
-                        textColor: (semanticColor && (battery.isCharging || battery.isLowPowerMode || battery.percentage <= 20)) ? batColor : fg
+                        textColor: fg
                     )
                     drawWiFiGlyph(
                         ctx: ctx,
-                        center: CGPoint(x: center.x, y: center.y - 1.05),
-                        scale: 0.90,
+                        center: CGPoint(x: center.x, y: center.y - 1.35),
+                        scale: 0.85,
                         signalBars: wifi.signalBars,
                         poweredOn: wifi.isPoweredOn,
                         color: fg
@@ -202,7 +217,7 @@ public enum StatusBadgeRenderer {
                         drawChargingBolt(
                             ctx: ctx,
                             center: CGPoint(x: center.x + ringRadius * 0.72, y: center.y - ringRadius * 0.70),
-                            color: semanticColor ? batColor : fg
+                            color: fg
                         )
                     }
                 } else {
@@ -213,7 +228,7 @@ public enum StatusBadgeRenderer {
                         drawChargingBolt(
                             ctx: ctx,
                             center: CGPoint(x: center.x + ringRadius * 0.72, y: center.y - ringRadius * 0.70),
-                            color: semanticColor ? batColor : fg
+                            color: fg
                         )
                     }
                 }
@@ -249,7 +264,7 @@ public enum StatusBadgeRenderer {
                     drawChargingBolt(
                         ctx: ctx,
                         center: CGPoint(x: center.x + 9.6 * 0.72, y: center.y - 9.6 * 0.70),
-                        color: semanticColor ? batColor : fg
+                        color: fg
                     )
                 }
 
@@ -264,7 +279,7 @@ public enum StatusBadgeRenderer {
                     drawChargingBolt(
                         ctx: ctx,
                         center: CGPoint(x: center.x + radius * 0.72, y: center.y - radius * 0.70),
-                        color: semanticColor ? batColor : fg
+                        color: fg
                     )
                 }
 
@@ -278,7 +293,7 @@ public enum StatusBadgeRenderer {
                     drawChargingBolt(
                         ctx: ctx,
                         center: CGPoint(x: center.x + radius * 0.72, y: center.y - radius * 0.70),
-                        color: semanticColor ? batColor : fg
+                        color: fg
                     )
                 }
             }
@@ -369,9 +384,8 @@ public enum StatusBadgeRenderer {
         let clampedPct = min(100, max(0, percentage))
         let pctText = "\(clampedPct)"
         let isThreeDigits = clampedPct >= 100
-        let fontSize: CGFloat = isThreeDigits ? 6.4 : 7.3
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .heavy)
-        let kern: CGFloat = isThreeDigits ? -0.45 : -0.15
+        let font = isThreeDigits ? openRingThreeDigitFont : openRingTwoDigitFont
+        let kern: CGFloat = isThreeDigits ? -0.35 : -0.20
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: textColor,
@@ -380,8 +394,8 @@ public enum StatusBadgeRenderer {
         let attrStr = NSAttributedString(string: pctText, attributes: attrs)
         let textSize = attrStr.size()
 
-        let halfChord = (textSize.width / 2.0) + (lineWidth * 0.5) + 0.75
-        let sinVal = min(0.76, max(0.30, halfChord / radius))
+        let halfChord = (textSize.width / 2.0) + (lineWidth * 0.5) + 0.65
+        let sinVal = min(0.80, max(0.32, halfChord / radius))
         let gapHalfDeg = Double(asin(sinVal)) * 180.0 / .pi
         let arcSpan = max(180.0, 360.0 - 2.0 * gapHalfDeg)
 
