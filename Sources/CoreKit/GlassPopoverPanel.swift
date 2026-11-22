@@ -220,7 +220,9 @@ public final class GlassPopoverPanel: NSPanel {
 
         let buttonRectInWindow = button.convert(button.bounds, to: nil)
         let buttonScreenRect = buttonWindow.convertToScreen(buttonRectInWindow)
-        let screen = buttonWindow.screen ?? NSScreen.main ?? NSScreen.screens.first!
+        guard let screen = buttonWindow.screen ?? NSScreen.main ?? NSScreen.screens.first else {
+            return NSRect(x: round(buttonScreenRect.midX - canvasWidth / 2.0), y: round(buttonScreenRect.minY - canvasHeight), width: canvasWidth, height: canvasHeight)
+        }
         let visibleFrame = screen.visibleFrame
 
         // Align visible glass card neatly under the status bar item, clamped within screen bounds
