@@ -154,6 +154,11 @@ public final class DuoBarStore: ObservableObject {
     }
 
     deinit {
+        powerSettleWork?.cancel()
+        pendingBatteryRefreshWork?.cancel()
+        pendingWiFiRefreshWork?.cancel()
+        pendingKillResetWork?.cancel()
+        portFeedbackResetWork?.cancel()
         let nc = NSWorkspace.shared.notificationCenter
         for obs in workspaceObservers {
             nc.removeObserver(obs)
@@ -178,6 +183,12 @@ public final class DuoBarStore: ObservableObject {
                     self.isScreenAsleep = true
                     self.timer?.invalidate()
                     self.timer = nil
+                    self.powerSettleWork?.cancel()
+                    self.powerSettleWork = nil
+                    self.pendingBatteryRefreshWork?.cancel()
+                    self.pendingBatteryRefreshWork = nil
+                    self.pendingWiFiRefreshWork?.cancel()
+                    self.pendingWiFiRefreshWork = nil
                 }
             }
             workspaceObservers.append(obs)
