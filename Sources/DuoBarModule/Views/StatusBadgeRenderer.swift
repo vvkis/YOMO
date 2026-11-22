@@ -3,28 +3,33 @@ import CoreGraphics
 import CoreKit
 
 public enum StatusBadgeRenderer {
-    private static let capsuleTextX: CGFloat = 22.5
-    private static let capsuleArrowCenterOffsetX: CGFloat = 2.6
-    private static let capsuleSpeedTextOffsetX: CGFloat = 6.8
+    private static let capsuleTextX: CGFloat = 22.2
+    private static let capsuleArrowCenterOffsetX: CGFloat = 2.1
+    private static let capsuleSpeedTextOffsetX: CGFloat = 5.8
+
+    private static let topValueFont = NSFont.monospacedDigitSystemFont(ofSize: 10.2, weight: .semibold)
+    private static let topPercentFont = NSFont.systemFont(ofSize: 8.2, weight: .semibold)
+    private static let bottomValueFont = NSFont.monospacedDigitSystemFont(ofSize: 9.2, weight: .medium)
+    private static let bottomUnitFont = NSFont.systemFont(ofSize: 8.0, weight: .semibold)
 
     /// Invariant width reserving worst-case bounds ("100%" / "↓ 99.9 M") so the menu bar icon never shifts horizontally.
     private static let fixedCapsuleWidth: CGFloat = {
         let maxTop = NSMutableAttributedString(
             string: "100",
-            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11.2, weight: .medium)]
+            attributes: [.font: topValueFont, .kern: -0.2]
         )
         maxTop.append(NSAttributedString(
             string: "%",
-            attributes: [.font: NSFont.systemFont(ofSize: 9.6, weight: .medium)]
+            attributes: [.font: topPercentFont]
         ))
 
         let maxBot = NSMutableAttributedString(
             string: "99.9",
-            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium)]
+            attributes: [.font: bottomValueFont, .kern: -0.15]
         )
         maxBot.append(NSAttributedString(
             string: "\u{2009}M",
-            attributes: [.font: NSFont.systemFont(ofSize: 8.6, weight: .medium)]
+            attributes: [.font: bottomUnitFont]
         ))
 
         let maxTextColWidth = max(maxTop.size().width, capsuleSpeedTextOffsetX + maxBot.size().width)
@@ -101,61 +106,43 @@ public enum StatusBadgeRenderer {
         let topAttr = NSMutableAttributedString(
             string: numStr,
             attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 11.2, weight: .medium),
-                .foregroundColor: memoryTextColor
+                .font: topValueFont,
+                .foregroundColor: memoryTextColor,
+                .kern: -0.2
             ]
         )
         topAttr.append(NSAttributedString(
             string: "%",
             attributes: [
-                .font: NSFont.systemFont(ofSize: 9.6, weight: .medium),
-                .foregroundColor: memoryTextColor.withAlphaComponent(0.95)
+                .font: topPercentFont,
+                .foregroundColor: memoryTextColor.withAlphaComponent(0.88)
             ]
         ))
 
         let dominantIsUp = network.dominantIsUpload
         let (valText, unitText) = Formatters.splitSpeed(network.dominantSpeedBytesPerSec)
+        let subFg = fg.withAlphaComponent(0.92)
         let botAttr = NSMutableAttributedString(
             string: valText,
             attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium),
-                .foregroundColor: fg
+                .font: bottomValueFont,
+                .foregroundColor: subFg,
+                .kern: -0.15
             ]
         )
         botAttr.append(NSAttributedString(
             string: "\u{2009}\(unitText)",
             attributes: [
-                .font: NSFont.systemFont(ofSize: 8.6, weight: .medium),
-                .foregroundColor: fg.withAlphaComponent(0.92)
+                .font: bottomUnitFont,
+                .foregroundColor: fg.withAlphaComponent(0.84)
             ]
         ))
 
         let width: CGFloat = (style == .capsule) ? fixedCapsuleWidth : 22.0
         let size = NSSize(width: width, height: height)
-        let scale: CGFloat = NSScreen.main?.backingScaleFactor ?? 2.0
-        let pixelW = Int(ceil(width * scale))
-        let pixelH = Int(ceil(height * scale))
 
-        guard let rep = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: pixelW,
-            pixelsHigh: pixelH,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ) else {
-            return NSImage(size: size)
-        }
-        rep.size = size
-
-        NSGraphicsContext.saveGraphicsState()
-        if let nsCtx = NSGraphicsContext(bitmapImageRep: rep) {
-            NSGraphicsContext.current = nsCtx
-            let ctx = nsCtx.cgContext
+        let image = NSImage(size: size, flipped: false) { _ in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
             ctx.setAllowsAntialiasing(true)
             ctx.setShouldAntialias(true)
             ctx.setAllowsFontSmoothing(false)
@@ -166,8 +153,8 @@ public enum StatusBadgeRenderer {
             switch style {
             case .capsule:
                 if showBatteryPercentInRing {
-                    let center = CGPoint(x: 10.5, y: 11.7)
-                    let radius: CGFloat = 9.0
+                    let center = CGPoint(x: 10.5, y: 11.8)
+                    let radius: CGFloat = 8.9
                     drawOpenTopBatteryRing(
                         ctx: ctx,
                         center: center,
@@ -178,7 +165,14 @@ public enum StatusBadgeRenderer {
                         ringColor: batColor,
                         textColor: (semanticColor && (battery.isCharging || battery.isLowPowerMode || battery.percentage <= 20)) ? batColor : fg
                     )
-                    drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 1.35), scale: 0.86, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                    drawWiFiGlyph(
+                        ctx: ctx,
+                        center: CGPoint(x: center.x, y: center.y - 0.95),
+                        scale: 0.85,
+                        signalBars: wifi.signalBars,
+                        poweredOn: wifi.isPoweredOn,
+                        color: fg
+                    )
                 } else {
                     let center = CGPoint(x: 10.5, y: 12.0)
                     let radius: CGFloat = 8.9
@@ -189,10 +183,21 @@ public enum StatusBadgeRenderer {
                     }
                 }
 
-                topAttr.draw(at: NSPoint(x: capsuleTextX, y: 10.9))
+                // Tightly group the 2 rows so their total visual height matches the 18pt left ring
+                let topDrawY: CGFloat = 11.4
+                let botDrawY: CGFloat = 2.1
+                topAttr.draw(at: NSPoint(x: capsuleTextX, y: topDrawY))
 
-                drawMicroArrow(ctx: ctx, origin: CGPoint(x: capsuleTextX + capsuleArrowCenterOffsetX, y: 5.9), pointingUp: dominantIsUp, color: fg)
-                botAttr.draw(at: NSPoint(x: capsuleTextX + capsuleSpeedTextOffsetX, y: 0.7))
+                // Optical center of bottom row capHeight so the arrow aligns with "0.5 K"
+                let botBaselineY = botDrawY - bottomValueFont.descender
+                let arrowCenterY = botBaselineY + (bottomValueFont.capHeight * 0.5)
+                drawMicroArrow(
+                    ctx: ctx,
+                    origin: CGPoint(x: capsuleTextX + capsuleArrowCenterOffsetX, y: arrowCenterY),
+                    pointingUp: dominantIsUp,
+                    color: subFg
+                )
+                botAttr.draw(at: NSPoint(x: capsuleTextX + capsuleSpeedTextOffsetX, y: botDrawY))
 
             case .dualRing:
                 let center = CGPoint(x: 11.0, y: 12.0)
@@ -222,11 +227,9 @@ public enum StatusBadgeRenderer {
                 drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.25, startCW: 190, spanCW: 160, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
                 drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 0.98, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
             }
+            return true
         }
-        NSGraphicsContext.restoreGraphicsState()
 
-        let image = NSImage(size: size)
-        image.addRepresentation(rep)
         image.isTemplate = !semanticColor
         return image
     }
@@ -234,13 +237,13 @@ public enum StatusBadgeRenderer {
     private static func drawMicroArrow(ctx: CGContext, origin: CGPoint, pointingUp: Bool, color: NSColor) {
         ctx.saveGState()
         ctx.setStrokeColor(color.cgColor)
-        ctx.setLineWidth(1.45)
+        ctx.setLineWidth(1.3)
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
 
-        let halfH: CGFloat = 3.1
-        let wingW: CGFloat = 2.25
-        let wingH: CGFloat = 2.25
+        let halfH: CGFloat = 2.65
+        let wingW: CGFloat = 1.85
+        let wingH: CGFloat = 1.85
 
         ctx.move(to: CGPoint(x: origin.x, y: origin.y - halfH))
         ctx.addLine(to: CGPoint(x: origin.x, y: origin.y + halfH))
@@ -309,8 +312,7 @@ public enum StatusBadgeRenderer {
         let clampedPct = min(100, max(0, percentage))
         let pctText = "\(clampedPct)"
         let isThreeDigits = clampedPct >= 100
-        // Proportional SF Pro + tight kerning keeps "100" narrow so the ring stays circular instead of U-shaped
-        let fontSize: CGFloat = isThreeDigits ? 5.6 : 6.5
+        let fontSize: CGFloat = isThreeDigits ? 5.8 : 6.5
         let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
         let kern: CGFloat = isThreeDigits ? -0.45 : -0.15
         let attrs: [NSAttributedString.Key: Any] = [
@@ -322,7 +324,7 @@ public enum StatusBadgeRenderer {
         let textSize = attrStr.size()
 
         // Tight angular gap sized to actual inked width + round-cap clearance
-        let halfChord = (textSize.width / 2.0) + (lineWidth * 0.5) + 0.8
+        let halfChord = (textSize.width / 2.0) + (lineWidth * 0.5) + 0.75
         let sinVal = min(0.76, max(0.30, halfChord / radius))
         let gapHalfDeg = Double(asin(sinVal)) * 180.0 / .pi
         let arcSpan = max(180.0, 360.0 - 2.0 * gapHalfDeg)
@@ -339,9 +341,9 @@ public enum StatusBadgeRenderer {
             color: ringColor
         )
 
-        // Nestle digits cleanly along the upper chord between the two arc endpoints
+        // Nestle digits cleanly along the upper chord between the two arc endpoints (tucked 0.35pt inward to follow ring curvature)
         let arcEndY = center.y + radius * CGFloat(cos(gapHalfDeg * .pi / 180.0))
-        let targetMidY = (arcEndY + (center.y + radius)) * 0.5
+        let targetMidY = (arcEndY * 0.65) + ((center.y + radius) * 0.35)
         let textX = center.x - textSize.width / 2.0
         let textY = targetMidY - (font.capHeight / 2.0) + font.descender
         attrStr.draw(at: NSPoint(x: textX, y: textY))
