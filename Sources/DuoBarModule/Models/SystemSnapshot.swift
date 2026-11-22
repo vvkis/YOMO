@@ -245,6 +245,9 @@ public final class AppPreferences: ObservableObject {
     @AppStorage("semanticColor") public var semanticColor: Bool = true {
         willSet { objectWillChange.send() }
     }
+    @AppStorage("showBatteryPercentInRing") public var showBatteryPercentInRing: Bool = false {
+        willSet { objectWillChange.send() }
+    }
     @AppStorage("refreshInterval") public var refreshInterval: Double = 2.0 {
         willSet { objectWillChange.send() }
     }

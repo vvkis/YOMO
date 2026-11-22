@@ -76,6 +76,22 @@ struct SettingsDetailView: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
 
+                if prefs.badgeStyle == .capsule {
+                    Divider().opacity(0.45)
+
+                    Toggle(isOn: $prefs.showBatteryPercentInRing) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("电量环顶部显示百分比")
+                                .font(.system(size: 12, weight: .medium))
+                            Text("断开圆环顶部缺口嵌入实时电量数字")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                }
+
                 Divider().opacity(0.45)
 
                 HStack {

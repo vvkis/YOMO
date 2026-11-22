@@ -38,6 +38,11 @@ public struct DuoBarConsoleView: View {
                         Toggle("语义配色（充电绿 / 低电红 / 正常水位纯净白）", isOn: $prefs.semanticColor)
                             .toggleStyle(.switch)
 
+                        if prefs.badgeStyle == .capsule {
+                            Toggle("电量环顶部断开显示百分比数字（iPhone Duo 风格）", isOn: $prefs.showBatteryPercentInRing)
+                                .toggleStyle(.switch)
+                        }
+
                         HStack {
                             Text("采样刷新间隔")
                             Spacer()

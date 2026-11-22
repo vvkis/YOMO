@@ -31,6 +31,7 @@ private struct BadgeRenderKey: Equatable {
     let speedBucket: String
     let style: BadgeStyle
     let semanticColor: Bool
+    let showBatteryPercentInRing: Bool
     let isDarkMenuBar: Bool
 }
 
@@ -202,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             speedBucket: speedBucket,
             style: duoBarStore.prefs.badgeStyle,
             semanticColor: duoBarStore.prefs.semanticColor,
+            showBatteryPercentInRing: duoBarStore.prefs.showBatteryPercentInRing,
             isDarkMenuBar: isDarkMenuBar
         )
 
@@ -218,6 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             network: net,
             style: duoBarStore.prefs.badgeStyle,
             semanticColor: duoBarStore.prefs.semanticColor,
+            showBatteryPercentInRing: duoBarStore.prefs.showBatteryPercentInRing,
             isDarkMenuBar: isDarkMenuBar
         )
 

@@ -11,6 +11,7 @@ public enum StatusBadgeRenderer {
         network: NetworkStats,
         style: BadgeStyle,
         semanticColor: Bool,
+        showBatteryPercentInRing: Bool = false,
         isDarkMenuBar: Bool
     ) -> NSImage {
         let height: CGFloat = 24.0
@@ -148,12 +149,28 @@ public enum StatusBadgeRenderer {
 
             switch style {
             case .capsule:
-                let center = CGPoint(x: 10.5, y: 12.0)
-                let radius: CGFloat = 8.9
-                drawFullRing(ctx: ctx, center: center, radius: radius, lineWidth: 2.25, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
-                drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.35), scale: 0.96, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
-                if battery.isCharging && semanticColor {
-                    drawChargingDot(ctx: ctx, center: CGPoint(x: center.x, y: center.y + radius), color: batColor, borderColor: isDarkMenuBar ? .black : .white)
+                if showBatteryPercentInRing {
+                    let center = CGPoint(x: 10.5, y: 11.4)
+                    let radius: CGFloat = 8.9
+                    drawOpenTopBatteryRing(
+                        ctx: ctx,
+                        center: center,
+                        radius: radius,
+                        lineWidth: 2.15,
+                        percentage: battery.percentage,
+                        track: trackColor,
+                        ringColor: batColor,
+                        textColor: (semanticColor && (battery.isCharging || battery.isLowPowerMode || battery.percentage <= 20)) ? batColor : fg
+                    )
+                    drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 1.15), scale: 0.88, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                } else {
+                    let center = CGPoint(x: 10.5, y: 12.0)
+                    let radius: CGFloat = 8.9
+                    drawFullRing(ctx: ctx, center: center, radius: radius, lineWidth: 2.25, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
+                    drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.35), scale: 0.96, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                    if battery.isCharging && semanticColor {
+                        drawChargingDot(ctx: ctx, center: CGPoint(x: center.x, y: center.y + radius), color: batColor, borderColor: isDarkMenuBar ? .black : .white)
+                    }
                 }
 
                 let rightEdge = width - 1.0
@@ -262,6 +279,52 @@ public enum StatusBadgeRenderer {
         }
         ctx.strokePath()
         ctx.restoreGState()
+    }
+
+    /// Open-top battery gauge ring (iPhone Duo style): opens a centered gap at 12 o'clock
+    /// sized dynamically to the battery percentage digits and draws the digits flush along the top arc.
+    private static func drawOpenTopBatteryRing(
+        ctx: CGContext,
+        center: CGPoint,
+        radius: CGFloat,
+        lineWidth: CGFloat,
+        percentage: Int,
+        track: NSColor,
+        ringColor: NSColor,
+        textColor: NSColor
+    ) {
+        let clampedPct = min(100, max(0, percentage))
+        let pctText = "\(clampedPct)"
+        let fontSize: CGFloat = clampedPct >= 100 ? 6.1 : 7.0
+        let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: textColor
+        ]
+        let textSize = (pctText as NSString).size(withAttributes: attrs)
+
+        // Compute dynamic angular half-gap at 12 o'clock so round stroke caps never collide with digits
+        let halfChord = (textSize.width / 2.0) + 1.9
+        let sinVal = min(0.90, max(0.32, halfChord / radius))
+        let gapHalfDeg = Double(asin(sinVal)) * 180.0 / .pi
+        let arcSpan = max(120.0, 360.0 - 2.0 * gapHalfDeg)
+
+        drawSegmentArc(
+            ctx: ctx,
+            center: center,
+            radius: radius,
+            lineWidth: lineWidth,
+            startCW: gapHalfDeg,
+            spanCW: arcSpan,
+            progress: Double(clampedPct) / 100.0,
+            track: track,
+            color: ringColor
+        )
+
+        // Visually center digit cap-height right on the top rim of the ring (center.y + radius)
+        let textX = center.x - textSize.width / 2.0
+        let textY = (center.y + radius) - (font.capHeight / 2.0) + font.descender
+        (pctText as NSString).draw(at: NSPoint(x: textX, y: textY), withAttributes: attrs)
     }
 
     private static func drawSegmentArc(
