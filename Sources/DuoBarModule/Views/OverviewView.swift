@@ -7,9 +7,18 @@ import ScrollReverserModule
 import ClipboardModule
 import KeyboardLockModule
 
+private struct BentoRowBand {
+    let minY: CGFloat
+    let maxY: CGFloat
+    let tiles: [OverviewTileID]
+    let usedCols: Int
+}
+
 private struct BentoGridLayout {
     let frames: [OverviewTileID: CGRect]
     let spans: [OverviewTileID: Int]
+    let rowBands: [BentoRowBand]
+    let visualOrder: [OverviewTileID]
     let totalHeight: CGFloat
 }
 
@@ -41,52 +50,54 @@ struct OverviewView: View {
     private let gridTotalWidth: CGFloat = 290
     private let gridSpacing: CGFloat = 8
 
-    /// Computes exact 4-column Bento Grid coordinates for each enabled tile WITHOUT stretching
-    /// small tiles against the user's will. Every tile strictly respects its chosen column span (1, 2, 3, or 4).
+    /// Computes exact 4-column Bento Grid coordinates using First-Fit Row Packing:
+    /// small tiles automatically fill available gaps in earlier partial rows (e.g. a 1x tile next to a 3x tile)
+    /// instead of leaving dead empty holes when a 4x full-width tile is dragged between them.
     private var gridLayout: BentoGridLayout {
         let activeTiles = moduleSettings.enabledOverviewTiles
         let colUnit = (gridTotalWidth - gridSpacing * 3.0) / 4.0 // 66.5pt per column
 
-        // 1. Pack tiles into rows of at most 4 columns
-        var rows: [[(tile: OverviewTileID, span: Int)]] = []
-        var currentRow: [(tile: OverviewTileID, span: Int)] = []
-        var usedCols = 0
+        // 1. First-Fit Row Packing into 4-column rows
+        var rows: [(items: [(tile: OverviewTileID, span: Int)], usedCols: Int)] = []
 
         for tile in activeTiles {
             let span = min(4, max(1, moduleSettings.colSpan(for: tile)))
-            if usedCols + span > 4 && !currentRow.isEmpty {
-                rows.append(currentRow)
-                currentRow = [(tile, span)]
-                usedCols = span
+            if let fitRowIdx = rows.firstIndex(where: { $0.usedCols + span <= 4 }) {
+                rows[fitRowIdx].items.append((tile, span))
+                rows[fitRowIdx].usedCols += span
             } else {
-                currentRow.append((tile, span))
-                usedCols += span
-                if usedCols == 4 {
-                    rows.append(currentRow)
-                    currentRow = []
-                    usedCols = 0
-                }
+                rows.append((items: [(tile, span)], usedCols: span))
             }
         }
-        if !currentRow.isEmpty {
-            rows.append(currentRow)
-        }
 
-        // 2. Assign exact CGRect (x, y, width, height) for each tile
+        // 2. Assign exact CGRect (x, y, width, height) for each tile and record row bands
         var frames: [OverviewTileID: CGRect] = [:]
         var spans: [OverviewTileID: Int] = [:]
+        var rowBands: [BentoRowBand] = []
+        var visualOrder: [OverviewTileID] = []
         var cursorY: CGFloat = 0
 
         for (rowIdx, row) in rows.enumerated() {
-            let rowH = rowHeight(for: row.map(\.tile))
+            let rowTiles = row.items.map(\.tile)
+            let rowH = rowHeight(for: rowTiles)
             var cursorX: CGFloat = 0
 
-            for item in row {
+            for item in row.items {
                 let w = round(CGFloat(item.span) * colUnit + CGFloat(max(0, item.span - 1)) * gridSpacing)
                 frames[item.tile] = CGRect(x: round(cursorX), y: round(cursorY), width: w, height: rowH)
                 spans[item.tile] = item.span
+                visualOrder.append(item.tile)
                 cursorX += w + gridSpacing
             }
+
+            rowBands.append(
+                BentoRowBand(
+                    minY: cursorY,
+                    maxY: cursorY + rowH,
+                    tiles: rowTiles,
+                    usedCols: row.usedCols
+                )
+            )
 
             cursorY += rowH
             if rowIdx < rows.count - 1 {
@@ -94,7 +105,13 @@ struct OverviewView: View {
             }
         }
 
-        return BentoGridLayout(frames: frames, spans: spans, totalHeight: max(50, cursorY))
+        return BentoGridLayout(
+            frames: frames,
+            spans: spans,
+            rowBands: rowBands,
+            visualOrder: visualOrder,
+            totalHeight: max(50, cursorY)
+        )
     }
 
     private func rowHeight(for tiles: [OverviewTileID]) -> CGFloat {
@@ -229,6 +246,7 @@ struct OverviewView: View {
                                         // resizing is strictly restricted to the dedicated layout-editing mode.
                                         guard isEditing || tile != .volume else { return }
                                         if moduleSettings.draggingOverviewTile != tile {
+                                            moduleSettings.commitPackedVisualOrder(layout.visualOrder)
                                             moduleSettings.draggingOverviewTile = tile
                                             moduleSettings.dragOriginFrame = rect
                                         }
@@ -238,15 +256,20 @@ struct OverviewView: View {
                                             x: moduleSettings.dragOriginFrame.midX + value.translation.width,
                                             y: moduleSettings.dragOriginFrame.midY + value.translation.height
                                         )
-                                        if let target = findTargetTile(at: currentCenter, excluding: tile, in: layout.frames) {
+                                        if let drop = findTargetDrop(at: currentCenter, excluding: tile, in: layout) {
                                             withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.82)) {
-                                                moduleSettings.moveOverviewTile(from: tile, to: target)
+                                                moduleSettings.moveOverviewTile(
+                                                    from: tile,
+                                                    to: drop.target,
+                                                    placeAfter: drop.placeAfter
+                                                )
                                             }
                                         }
                                     }
                                     .onEnded { _ in
                                         guard moduleSettings.draggingOverviewTile == tile else { return }
                                         withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.84)) {
+                                            moduleSettings.commitPackedVisualOrder(gridLayout.visualOrder)
                                             moduleSettings.draggingOverviewTile = nil
                                             moduleSettings.dragTranslation = .zero
                                         }
@@ -347,16 +370,34 @@ struct OverviewView: View {
         .padding(13)
     }
 
-    private func findTargetTile(
+    private func findTargetDrop(
         at point: CGPoint,
         excluding dragged: OverviewTileID,
-        in frames: [OverviewTileID: CGRect]
-    ) -> OverviewTileID? {
-        for (tile, rect) in frames where tile != dragged {
-            // Trigger swap when dragged center enters the inner 76% core of a target tile
+        in layout: BentoGridLayout
+    ) -> (target: OverviewTileID, placeAfter: Bool?)? {
+        // 1. Direct hit on an existing tile's core region
+        for (tile, rect) in layout.frames where tile != dragged {
             let hitBox = rect.insetBy(dx: rect.width * 0.12, dy: rect.height * 0.12)
             if hitBox.contains(point) {
-                return tile
+                return (target: tile, placeAfter: nil)
+            }
+        }
+
+        // 2. Empty right-hand slot on a partial row (e.g. dragging 1x Keyboard Lock into the empty 1-col gap next to 3x Scroll Reverser)
+        for band in layout.rowBands {
+            if point.y >= band.minY && point.y <= band.maxY {
+                let rowOtherTiles = band.tiles.filter { $0 != dragged }
+                guard let lastTile = rowOtherTiles.last,
+                      let lastRect = layout.frames[lastTile] else {
+                    continue
+                }
+                if point.x > lastRect.midX {
+                    return (target: lastTile, placeAfter: true)
+                } else if let firstTile = rowOtherTiles.first,
+                          let firstRect = layout.frames[firstTile],
+                          point.x < firstRect.midX {
+                    return (target: firstTile, placeAfter: false)
+                }
             }
         }
         return nil

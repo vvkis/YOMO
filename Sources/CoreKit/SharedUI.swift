@@ -213,7 +213,7 @@ public final class ModuleSettings: ObservableObject {
         return true
     }
 
-    public func moveOverviewTile(from source: OverviewTileID, to target: OverviewTileID) {
+    public func moveOverviewTile(from source: OverviewTileID, to target: OverviewTileID, placeAfter: Bool? = nil) {
         guard source != target,
               let fromIdx = overviewTileOrder.firstIndex(of: source),
               let toIdx = overviewTileOrder.firstIndex(of: target) else {
@@ -221,8 +221,42 @@ public final class ModuleSettings: ObservableObject {
         }
         var updated = overviewTileOrder
         let item = updated.remove(at: fromIdx)
-        updated.insert(item, at: toIdx)
+        if let placeAfter {
+            if let newTargetIdx = updated.firstIndex(of: target) {
+                let insertIdx = placeAfter ? min(updated.count, newTargetIdx + 1) : newTargetIdx
+                updated.insert(item, at: insertIdx)
+            } else {
+                updated.insert(item, at: toIdx)
+            }
+        } else {
+            updated.insert(item, at: toIdx)
+        }
         overviewTileOrder = updated
+    }
+
+    /// Commits the packed visual order back into `overviewTileOrder` so array order always matches visual grid order.
+    public func commitPackedVisualOrder(_ packedEnabledOrder: [OverviewTileID]) {
+        var result: [OverviewTileID] = []
+        var enabledIter = packedEnabledOrder.makeIterator()
+        let enabledSet = Set(packedEnabledOrder)
+
+        for item in overviewTileOrder {
+            if enabledSet.contains(item) {
+                if let next = enabledIter.next() {
+                    result.append(next)
+                }
+            } else {
+                result.append(item)
+            }
+        }
+        while let remaining = enabledIter.next() {
+            if !result.contains(remaining) {
+                result.append(remaining)
+            }
+        }
+        if result != overviewTileOrder {
+            overviewTileOrder = result
+        }
     }
 
     public func resetOverviewTileOrder() {
