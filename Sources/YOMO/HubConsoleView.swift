@@ -70,9 +70,9 @@ struct HubConsoleView: View {
         HStack(spacing: 0) {
             // Left Floating Rounded White Sidebar (WeChat Input style, traffic lights nestled cleanly at top-left)
             VStack(alignment: .leading, spacing: 4) {
-                // Reserved clearance for native macOS traffic lights (● ● ●)
+                // Clearance matching unified-toolbar traffic lights (● ● ● sit at y ≈ 19–33pt from window top)
                 Color.clear
-                    .frame(height: 36)
+                    .frame(height: 40)
 
                 ForEach(ConsoleSection.allCases) { section in
                     ConsoleSidebarItem(
@@ -112,8 +112,8 @@ struct HubConsoleView: View {
                     )
                     .shadow(color: ConsoleTheme.cardShadow(isDark: isDark), radius: 8, x: 0, y: 2)
             )
-            .padding(.leading, 8)
-            .padding(.vertical, 8)
+            .padding(.leading, 10)
+            .padding(.vertical, 10)
 
             // Right Detail Canvas
             Group {

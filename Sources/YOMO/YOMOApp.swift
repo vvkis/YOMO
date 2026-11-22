@@ -348,6 +348,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 backing: .buffered,
                 defer: false
             )
+            // Empty unified toolbar shifts macOS traffic lights inward to the modern inset position (~20pt)
+            // so they sit cleanly inside the floating white sidebar card instead of crowding the corner.
+            let toolbar = NSToolbar(identifier: "YOMOConsoleToolbar")
+            toolbar.showsBaselineSeparator = false
+            win.toolbar = toolbar
+            win.toolbarStyle = .unified
             win.titleVisibility = .hidden
             win.titlebarAppearsTransparent = true
             win.titlebarSeparatorStyle = .none
