@@ -308,6 +308,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.highlight(false)
         stopOutsideClickMonitor()
         duoBarStore.resetNavigation()
+        moduleSettings.isEditingOverviewLayout = false
+        moduleSettings.draggingOverviewTile = nil
         clipboardStore.searchQuery = ""
         let consoleVisible = (consoleWindow?.isVisible == true)
         clipboardStore.setUIActive(consoleVisible)

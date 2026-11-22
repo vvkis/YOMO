@@ -306,6 +306,7 @@ public final class ClipboardStore: ObservableObject {
     private var hotKeyManager: ClipboardHotKeyManager?
     private var ocrToastClearWorkItem: DispatchWorkItem?
     private let ioQueue = DispatchQueue(label: "com.yomo.clipboard.io", qos: .utility)
+    private let ocrQueue = DispatchQueue(label: "com.yomo.clipboard.ocr", qos: .userInitiated)
     private let thumbnailCache = NSCache<NSString, NSImage>()
     private let appIconCache = NSCache<NSString, NSImage>()
 
@@ -521,7 +522,7 @@ public final class ClipboardStore: ObservableObject {
         ocrToastMessage = nil
         ocrScanningEntryID = entryID
 
-        ioQueue.async { [weak self] in
+        ocrQueue.async { [weak self] in
             let result = Self.performVisionScan(fileURL: fileURL, entryID: entryID, sourceLabel: sourceLabel)
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -597,6 +598,15 @@ public final class ClipboardStore: ObservableObject {
             )
         }
 
+        let orientation: CGImagePropertyOrientation = {
+            guard let props = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any],
+                  let raw = (props[kCGImagePropertyOrientation] as? NSNumber)?.uint32Value,
+                  let parsed = CGImagePropertyOrientation(rawValue: raw) else {
+                return .up
+            }
+            return parsed
+        }()
+
         let textRequest = VNRecognizeTextRequest()
         textRequest.recognitionLevel = .accurate
         textRequest.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
@@ -605,7 +615,7 @@ public final class ClipboardStore: ObservableObject {
 
         let barcodeRequest = VNDetectBarcodesRequest()
 
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: orientation, options: [:])
         do {
             try handler.perform([textRequest, barcodeRequest])
         } catch {
@@ -619,7 +629,19 @@ public final class ClipboardStore: ObservableObject {
             )
         }
 
-        let textLines: [String] = (textRequest.results ?? []).compactMap { obs in
+        // Sort observations in natural reading order (top-to-bottom in Vision normalized coords where +Y is up,
+        // and left-to-right when two bounding boxes sit on the same horizontal line).
+        let sortedTextObservations = (textRequest.results ?? []).sorted { a, b in
+            let boxA = a.boundingBox
+            let boxB = b.boundingBox
+            let avgH = max(0.01, (boxA.height + boxB.height) * 0.5)
+            if abs(boxA.midY - boxB.midY) <= avgH * 0.55 {
+                return boxA.minX < boxB.minX
+            }
+            return boxA.midY > boxB.midY
+        }
+
+        let textLines: [String] = sortedTextObservations.compactMap { obs in
             obs.topCandidates(1).first?.string
         }
         let rawText = textLines.joined(separator: "\n")

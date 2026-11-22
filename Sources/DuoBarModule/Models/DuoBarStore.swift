@@ -214,7 +214,7 @@ public final class DuoBarStore: ObservableObject {
             && !latestBattery.timeRemainingText.hasPrefix("剩余约")
             && (tickCount % 3 == 0)
         let includeBattery = (isPopoverOpen && currentPage == .battery) || needsBatteryEstimateRefresh
-        let includeDetailedBattery = isPopoverOpen && currentPage == .battery
+        let includeDetailedBattery = includeBattery
         sampleTelemetryAsync(
             includeDisk: includeDisk,
             includeBattery: includeBattery,
@@ -451,6 +451,9 @@ public final class DuoBarStore: ObservableObject {
                 guard let self else { return }
                 self.isSamplingPorts = false
                 self.isLoadingPorts = false
+                guard self.isPopoverOpen, self.currentPage == .telemetry, self.telemetryTab == .ports else {
+                    return
+                }
                 self.listeningPorts = scanned
                 // Prune force-kill badges for PIDs that have exited
                 let alivePIDs = Set(scanned.compactMap(\.pid))
@@ -645,7 +648,10 @@ public final class DuoBarStore: ObservableObject {
             }
         } else if wasTelemetry {
             systemMonitor.resetProcessSampler()
+            pendingKillResetWork?.cancel()
+            portFeedbackResetWork?.cancel()
             pendingKillPortID = nil
+            portActionFeedback = nil
         }
     }
 
@@ -654,6 +660,8 @@ public final class DuoBarStore: ObservableObject {
         if currentPage == .telemetry {
             systemMonitor.resetProcessSampler()
         }
+        pendingKillResetWork?.cancel()
+        portFeedbackResetWork?.cancel()
         isGoingForward = false
         currentPage = .overview
         showOtherNetworks = false

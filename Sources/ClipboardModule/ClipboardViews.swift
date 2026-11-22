@@ -22,7 +22,16 @@ public struct ClipboardPopoverView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SubpageHeader(title: "历史剪贴板", onBack: onBack) {
+            SubpageHeader(
+                title: "历史剪贴板",
+                onBack: {
+                    if store.activeOCRResult != nil {
+                        store.dismissOCRResult()
+                    } else {
+                        onBack()
+                    }
+                }
+            ) {
                 if store.activeOCRResult == nil && store.hasUnpinnedItems {
                     Button {
                         store.clearUnpinned()
@@ -211,6 +220,9 @@ public struct ClipboardPopoverView: View {
         .padding(14)
         .onAppear {
             store.setUIActive(true)
+        }
+        .onDisappear {
+            store.dismissOCRResult()
         }
     }
 }
@@ -802,6 +814,9 @@ public struct ClipboardConsoleView: View {
         }
         .onAppear {
             store.setUIActive(true)
+        }
+        .onDisappear {
+            store.dismissOCRResult()
         }
     }
 }

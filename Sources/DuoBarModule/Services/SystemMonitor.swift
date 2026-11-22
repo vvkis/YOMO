@@ -657,6 +657,17 @@ final class SystemMonitor: @unchecked Sendable {
     }
 
     private static func extractIPAddress(vflag: UInt8, v4: in_addr, v6: in6_addr) -> String {
+        if (vflag & UInt8(INI_IPV6)) != 0 {
+            var addr = v6
+            var buf = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+            if inet_ntop(AF_INET6, &addr, &buf, socklen_t(INET6_ADDRSTRLEN)) != nil {
+                let raw = String(cString: buf)
+                if raw.lowercased().hasPrefix("::ffff:") {
+                    return String(raw.dropFirst(7))
+                }
+                return raw
+            }
+        }
         if (vflag & UInt8(INI_IPV4)) != 0 {
             var addr = v4
             var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
@@ -664,18 +675,16 @@ final class SystemMonitor: @unchecked Sendable {
                 return String(cString: buf)
             }
         }
-        if (vflag & UInt8(INI_IPV6)) != 0 {
-            var addr = v6
-            var buf = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
-            if inet_ntop(AF_INET6, &addr, &buf, socklen_t(INET6_ADDRSTRLEN)) != nil {
-                return String(cString: buf)
-            }
-        }
         return "*"
     }
 
     private static func isLoopbackAddress(_ addr: String) -> Bool {
-        addr == "127.0.0.1" || addr == "::1" || addr.hasPrefix("127.")
+        let lower = addr.lowercased()
+        return lower == "127.0.0.1"
+            || lower == "::1"
+            || lower.hasPrefix("127.")
+            || lower.hasPrefix("::ffff:127.")
+            || lower == "fe80::1"
     }
 
     private static func formatBindAddress(_ addresses: [String], isLoopbackOnly: Bool) -> String {
@@ -684,6 +693,9 @@ final class SystemMonitor: @unchecked Sendable {
         }
         if addresses.contains("0.0.0.0") && addresses.contains("::") {
             return "* (IPv4/6)"
+        }
+        if addresses.first == "::" {
+            return "* (IPv6)"
         }
         return addresses.first ?? "*"
     }

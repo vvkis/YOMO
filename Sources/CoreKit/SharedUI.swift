@@ -18,8 +18,64 @@ public enum GlassAppearanceMode: String, CaseIterable, Identifiable {
     }
 }
 
-/// Centralized module enable/disable toggles shared across the Hub Console and Menu Bar shell.
+public enum OverviewTileID: String, CaseIterable, Identifiable, Codable, Sendable {
+    case wifi = "wifi"
+    case battery = "battery"
+    case bluetoothAudio = "bluetoothAudio"
+    case hidpi = "hidpi"
+    case keepAwake = "keepAwake"
+    case scrollReverser = "scrollReverser"
+    case keyboardLock = "keyboardLock"
+    case clipboard = "clipboard"
+    case volume = "volume"
+    case telemetry = "telemetry"
+
+    public var id: String { rawValue }
+
+    /// Default 4-column Bento Grid layout order matching the classic YOMO overview
+    public static let defaultOrder: [OverviewTileID] = [
+        .wifi, .battery,
+        .bluetoothAudio, .hidpi, .keepAwake,
+        .scrollReverser, .keyboardLock,
+        .clipboard,
+        .volume,
+        .telemetry
+    ]
+
+    /// Fixed column span inside the 4-column Bento Grid (1 = 1/4 width, 2 = 1/2 width, 3 = 3/4 width, 4 = full width)
+    public var colSpan: Int {
+        switch self {
+        case .hidpi, .keepAwake, .keyboardLock:
+            return 1
+        case .wifi, .battery, .bluetoothAudio:
+            return 2
+        case .scrollReverser:
+            return 3
+        case .clipboard, .volume, .telemetry:
+            return 4
+        }
+    }
+
+    public var title: String {
+        switch self {
+        case .wifi: return "Wi-Fi"
+        case .battery: return "电池"
+        case .bluetoothAudio: return "蓝牙音频"
+        case .hidpi: return "HiDPI"
+        case .keepAwake: return "防休眠"
+        case .scrollReverser: return "滚轮翻转"
+        case .keyboardLock: return "键盘锁"
+        case .clipboard: return "历史剪贴板"
+        case .volume: return "声音输出"
+        case .telemetry: return "系统占用"
+        }
+    }
+}
+
+/// Centralized module enable/disable toggles and overview Bento layout order shared across the Hub Console and Menu Bar shell.
 public final class ModuleSettings: ObservableObject {
+    private static let tileOrderStorageKey = "overview.tileOrder.v1"
+
     @AppStorage("module.hidpi.enabled") public var hidpiEnabled: Bool = true {
         willSet { objectWillChange.send() }
     }
@@ -42,6 +98,16 @@ public final class ModuleSettings: ObservableObject {
         willSet { objectWillChange.send() }
     }
 
+    @Published public var overviewTileOrder: [OverviewTileID] {
+        didSet {
+            let rawList = overviewTileOrder.map(\.rawValue)
+            UserDefaults.standard.set(rawList, forKey: Self.tileOrderStorageKey)
+        }
+    }
+
+    @Published public var isEditingOverviewLayout: Bool = false
+    @Published public var draggingOverviewTile: OverviewTileID? = nil
+
     public var glassAppearance: GlassAppearanceMode {
         get { GlassAppearanceMode(rawValue: glassAppearanceRaw) ?? .dark }
         set {
@@ -49,7 +115,67 @@ public final class ModuleSettings: ObservableObject {
         }
     }
 
-    public init() {}
+    public init() {
+        let savedRaw = UserDefaults.standard.stringArray(forKey: Self.tileOrderStorageKey) ?? []
+        self.overviewTileOrder = Self.normalizedTileOrder(from: savedRaw)
+    }
+
+    public func isTileEnabled(_ tile: OverviewTileID) -> Bool {
+        switch tile {
+        case .wifi, .battery, .telemetry:
+            return true
+        case .bluetoothAudio, .volume:
+            return audioBluetoothEnabled
+        case .hidpi:
+            return hidpiEnabled
+        case .keepAwake:
+            return keepAwakeEnabled
+        case .scrollReverser:
+            return scrollReverserEnabled
+        case .keyboardLock:
+            return keyboardLockEnabled
+        case .clipboard:
+            return clipboardEnabled
+        }
+    }
+
+    public var enabledOverviewTiles: [OverviewTileID] {
+        overviewTileOrder.filter { isTileEnabled($0) }
+    }
+
+    public var isDefaultOverviewOrder: Bool {
+        overviewTileOrder == OverviewTileID.defaultOrder
+    }
+
+    public func moveOverviewTile(from source: OverviewTileID, to target: OverviewTileID) {
+        guard source != target,
+              let fromIdx = overviewTileOrder.firstIndex(of: source),
+              let toIdx = overviewTileOrder.firstIndex(of: target) else {
+            return
+        }
+        var updated = overviewTileOrder
+        let item = updated.remove(at: fromIdx)
+        updated.insert(item, at: toIdx)
+        overviewTileOrder = updated
+    }
+
+    public func resetOverviewTileOrder() {
+        overviewTileOrder = OverviewTileID.defaultOrder
+    }
+
+    private static func normalizedTileOrder(from rawStrings: [String]) -> [OverviewTileID] {
+        var result: [OverviewTileID] = []
+        var seen = Set<OverviewTileID>()
+        for raw in rawStrings {
+            if let id = OverviewTileID(rawValue: raw), seen.insert(id).inserted {
+                result.append(id)
+            }
+        }
+        for fallback in OverviewTileID.defaultOrder where seen.insert(fallback).inserted {
+            result.append(fallback)
+        }
+        return result
+    }
 }
 
 /// Reusable hover state tracker (avoids SwiftUIMacros `@State` requirement under CLT-only builds).
