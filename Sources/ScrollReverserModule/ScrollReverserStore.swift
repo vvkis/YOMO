@@ -15,7 +15,6 @@ private struct ScrollTapConfig {
 private final class ScrollEventTapEngine {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private let configLock = NSLock()
     private var config: ScrollTapConfig
 
     var isRunning: Bool { eventTap != nil }
@@ -29,9 +28,7 @@ private final class ScrollEventTapEngine {
     }
 
     func updateConfig(_ newConfig: ScrollTapConfig) {
-        configLock.lock()
         config = newConfig
-        configLock.unlock()
     }
 
     func start() -> Bool {
@@ -90,9 +87,7 @@ private final class ScrollEventTapEngine {
             return Unmanaged.passUnretained(event)
         }
 
-        configLock.lock()
         let cfg = config
-        configLock.unlock()
 
         // scrollWheelEventIsContinuous: 0 = discrete stepped mouse wheel, 1 = trackpad / Magic Mouse gesture
         if cfg.mouseOnly {

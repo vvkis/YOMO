@@ -60,7 +60,11 @@ public final class DuoBarStore: ObservableObject {
     private var isConsoleOpen = false
     private var isScreenAsleep = false
     private var isSamplingTelemetry = false
+    private var isSamplingBattery = false
+    private var isSamplingWiFi = false
     private var isSamplingProcesses = false
+    private var lastWiFiEventSampleTime: TimeInterval = 0
+    private var lastBatteryEventSampleTime: TimeInterval = 0
     private var lastRefreshInterval: Double = 0
     private var workspaceObservers: [NSObjectProtocol] = []
     private var cancellables = Set<AnyCancellable>()
@@ -77,15 +81,15 @@ public final class DuoBarStore: ObservableObject {
 
         batteryService.onPowerSourceChanged = { [weak self] in
             Task { @MainActor [weak self] in
-                self?.refreshBatteryState()
+                self?.refreshBatteryState(throttled: true)
             }
         }
 
         wifiService.onWiFiEventChanged = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.refreshWiFiQuickState()
-                if self.isPopoverOpen && self.currentPage == .wifi {
+                self.refreshWiFiQuickState(throttled: true)
+                if self.isPopoverOpen && self.currentPage == .wifi && !self.wifi.isScanning {
                     self.scanNearbyWiFi()
                 }
             }
@@ -94,7 +98,7 @@ public final class DuoBarStore: ObservableObject {
         wifiService.onAuthorizationChanged = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.refreshWiFiQuickState()
+                self.refreshWiFiQuickState(throttled: false)
                 if self.isPopoverOpen && self.currentPage == .wifi {
                     self.scanNearbyWiFi()
                 }
@@ -154,7 +158,7 @@ public final class DuoBarStore: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     self.isScreenAsleep = false
-                    self.refreshAll(includeHeavy: true, forcePublish: self.isUIActive)
+                    self.refreshAll(includeHeavy: self.isUIActive, forcePublish: self.isUIActive)
                     self.restartTimer()
                 }
             }
@@ -182,12 +186,15 @@ public final class DuoBarStore: ObservableObject {
     private func tick() {
         guard !isScreenAsleep else { return }
         tickCount += 1
+        // While popover/console is closed, rely 100% on system events for Wi-Fi & Battery,
+        // and only sample lightweight kernel Mach/sysctl counters (CPU / Memory / Network bytes).
         let includeDisk = isUIActive && (tickCount % 15 == 0)
-        let includeWiFiSignal = (tickCount % 3 == 0) || (isPopoverOpen && currentPage == .wifi)
+        let includeWiFiSignal = isUIActive && ((tickCount % 3 == 0) || currentPage == .wifi)
         let includeBattery = isPopoverOpen && (currentPage == .battery)
         sampleTelemetryAsync(
             includeDisk: includeDisk,
             includeBattery: includeBattery,
+            includeDetailedBattery: includeBattery,
             includeWiFi: includeWiFiSignal,
             forceRouteRefresh: false,
             forcePublish: false
@@ -201,6 +208,7 @@ public final class DuoBarStore: ObservableObject {
         sampleTelemetryAsync(
             includeDisk: includeHeavy || latestDisk.totalGB == 0,
             includeBattery: true,
+            includeDetailedBattery: includeHeavy || isUIActive,
             includeWiFi: true,
             forceRouteRefresh: includeHeavy,
             forcePublish: forcePublish
@@ -216,12 +224,23 @@ public final class DuoBarStore: ObservableObject {
         wifi = latestWiFi
     }
 
-    private func refreshBatteryState() {
+    private func refreshBatteryState(throttled: Bool = false) {
+        guard !isScreenAsleep, !isSamplingBattery else { return }
+        let now = Date().timeIntervalSinceReferenceDate
+        if throttled && (now - lastBatteryEventSampleTime) < 0.45 {
+            return
+        }
+        isSamplingBattery = true
+        lastBatteryEventSampleTime = now
+
         let batSvc = batteryService
+        let prevBat = latestBattery
+        let detailed = isUIActive
         telemetryQueue.async { [weak self] in
-            let bat = batSvc.sampleBattery()
+            let bat = batSvc.sampleBattery(includeDetailedIORegistry: detailed, previous: prevBat)
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.isSamplingBattery = false
                 self.latestBattery = bat
                 if self.isUIActive {
                     self.battery = bat
@@ -231,7 +250,15 @@ public final class DuoBarStore: ObservableObject {
         }
     }
 
-    private func refreshWiFiQuickState() {
+    private func refreshWiFiQuickState(throttled: Bool = false) {
+        guard !isScreenAsleep, !isSamplingWiFi else { return }
+        let now = Date().timeIntervalSinceReferenceDate
+        if throttled && (now - lastWiFiEventSampleTime) < 0.50 {
+            return
+        }
+        isSamplingWiFi = true
+        lastWiFiEventSampleTime = now
+
         let wifiSvc = wifiService
         let prevWiFi = latestWiFi
         let mon = systemMonitor
@@ -240,6 +267,7 @@ public final class DuoBarStore: ObservableObject {
             let nextNet = mon.sampleNetwork(forceRouteRefresh: true)
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.isSamplingWiFi = false
                 let merged = mergeWiFiLists(from: self.latestWiFi, into: nextWiFi)
                 self.latestWiFi = merged
                 self.latestNetwork = nextNet
@@ -255,6 +283,7 @@ public final class DuoBarStore: ObservableObject {
     private func sampleTelemetryAsync(
         includeDisk: Bool,
         includeBattery: Bool,
+        includeDetailedBattery: Bool,
         includeWiFi: Bool,
         forceRouteRefresh: Bool,
         forcePublish: Bool
@@ -265,6 +294,7 @@ public final class DuoBarStore: ObservableObject {
         let mon = systemMonitor
         let batSvc = batteryService
         let wifiSvc = wifiService
+        let prevBat = latestBattery
         let prevWiFi = latestWiFi
 
         telemetryQueue.async { [weak self] in
@@ -272,7 +302,9 @@ public final class DuoBarStore: ObservableObject {
             let nextMem = mon.sampleMemory()
             let nextNet = mon.sampleNetwork(forceRouteRefresh: forceRouteRefresh)
             let nextDisk: DiskStats? = includeDisk ? mon.sampleDisk() : nil
-            let nextBat: BatteryStats? = includeBattery ? batSvc.sampleBattery() : nil
+            let nextBat: BatteryStats? = includeBattery
+                ? batSvc.sampleBattery(includeDetailedIORegistry: includeDetailedBattery, previous: prevBat)
+                : nil
             let nextWiFi: WiFiState? = includeWiFi ? wifiSvc.sampleQuickState(previous: prevWiFi) : nil
 
             DispatchQueue.main.async {
@@ -346,7 +378,7 @@ public final class DuoBarStore: ObservableObject {
     // MARK: - Wi-Fi Actions (In-Range Only)
 
     public func scanNearbyWiFi() {
-        guard wifi.isPoweredOn else { return }
+        guard wifi.isPoweredOn, !wifi.isScanning else { return }
         wifi.isScanning = true
         wifi.lastError = nil
         latestWiFi = wifi
@@ -387,7 +419,7 @@ public final class DuoBarStore: ObservableObject {
                     self.wifi.lastError = err ?? "无法切换 Wi-Fi 状态"
                     self.latestWiFi.lastError = self.wifi.lastError
                 }
-                self.refreshWiFiQuickState()
+                self.refreshWiFiQuickState(throttled: false)
                 if on && self.currentPage == .wifi {
                     self.scanNearbyWiFi()
                 }
@@ -409,7 +441,7 @@ public final class DuoBarStore: ObservableObject {
                     self.wifi.lastError = err ?? "连接 \(ssid) 失败"
                 }
                 self.latestWiFi = self.wifi
-                self.refreshWiFiQuickState()
+                self.refreshWiFiQuickState(throttled: false)
                 self.scanNearbyWiFi()
             }
         }
@@ -428,7 +460,7 @@ public final class DuoBarStore: ObservableObject {
                     self.wifi.lastError = err ?? "连接 \(ssid) 失败，请检查密码"
                 }
                 self.latestWiFi = self.wifi
-                self.refreshWiFiQuickState()
+                self.refreshWiFiQuickState(throttled: false)
                 self.scanNearbyWiFi()
             }
         }
@@ -482,7 +514,7 @@ public final class DuoBarStore: ObservableObject {
                     self.latestBattery.isLowPowerMode = next
                     self.onStatusBarNeedsRedraw?()
                 }
-                self.refreshBatteryState()
+                self.refreshBatteryState(throttled: false)
             }
         }
     }

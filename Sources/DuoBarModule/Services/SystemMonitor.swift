@@ -342,17 +342,6 @@ final class SystemMonitor: @unchecked Sendable {
     }
 
     func sampleTopProcesses(limit: Int = 6) -> (topCPU: [ProcessStatItem], topMemory: [ProcessStatItem]) {
-        var appMetaByPID: [pid_t: (name: String, icon: NSImage?)] = [:]
-        for app in NSWorkspace.shared.runningApplications {
-            let pid = app.processIdentifier
-            if pid > 0 {
-                let name = app.localizedName ?? app.bundleIdentifier ?? ""
-                if !name.isEmpty {
-                    appMetaByPID[pid] = (name, app.icon)
-                }
-            }
-        }
-
         let pids = listAllPIDs()
         guard !pids.isEmpty else { return ([], []) }
 
@@ -375,7 +364,7 @@ final class SystemMonitor: @unchecked Sendable {
         var nextTimes: [pid_t: UInt64] = [:]
         nextTimes.reserveCapacity(pids.count)
 
-        var rawItems: [(pid: pid_t, name: String, cpu: Double, mem: UInt64, icon: NSImage?)] = []
+        var rawItems: [(pid: pid_t, cpu: Double, mem: UInt64)] = []
         rawItems.reserveCapacity(pids.count)
 
         for pid in pids {
@@ -401,18 +390,7 @@ final class SystemMonitor: @unchecked Sendable {
             }
 
             if memBytes < 5_000_000 && cpuPct < 0.1 { continue }
-
-            let meta = appMetaByPID[pid]
-            let resolvedName: String
-            if let appName = meta?.name, !appName.isEmpty {
-                resolvedName = appName
-            } else if let procName = Self.readProcessName(pid: pid), !procName.isEmpty {
-                resolvedName = procName
-            } else {
-                resolvedName = "PID \(pid)"
-            }
-
-            rawItems.append((pid: pid, name: resolvedName, cpu: cpuPct, mem: memBytes, icon: meta?.icon))
+            rawItems.append((pid: pid, cpu: cpuPct, mem: memBytes))
         }
 
         processLock.lock()
@@ -420,15 +398,43 @@ final class SystemMonitor: @unchecked Sendable {
         prevProcSampleTime = now
         processLock.unlock()
 
-        let topCPU = rawItems
-            .sorted { $0.cpu > $1.cpu }
-            .prefix(limit)
-            .map { ProcessStatItem(pid: $0.pid, name: $0.name, cpuPercent: $0.cpu, memoryBytes: $0.mem, icon: $0.icon) }
+        let topCPURaw = rawItems.sorted { $0.cpu > $1.cpu }.prefix(limit)
+        let topMemRaw = rawItems.sorted { $0.mem > $1.mem }.prefix(limit)
 
-        let topMem = rawItems
-            .sorted { $0.mem > $1.mem }
-            .prefix(limit)
-            .map { ProcessStatItem(pid: $0.pid, name: $0.name, cpuPercent: $0.cpu, memoryBytes: $0.mem, icon: $0.icon) }
+        // Resolve localized app name & icon ONLY for the few winning PIDs (at most 2 * limit)
+        var resolvedMeta: [pid_t: (name: String, icon: NSImage?)] = [:]
+        for entry in topCPURaw + topMemRaw where resolvedMeta[entry.pid] == nil {
+            let pid = entry.pid
+            if let app = NSRunningApplication(processIdentifier: pid) {
+                let appName = app.localizedName ?? app.bundleIdentifier ?? Self.readProcessName(pid: pid) ?? "PID \(pid)"
+                resolvedMeta[pid] = (appName, app.icon)
+            } else {
+                let procName = Self.readProcessName(pid: pid) ?? "PID \(pid)"
+                resolvedMeta[pid] = (procName, nil)
+            }
+        }
+
+        let topCPU = topCPURaw.map { item -> ProcessStatItem in
+            let meta = resolvedMeta[item.pid]
+            return ProcessStatItem(
+                pid: item.pid,
+                name: meta?.name ?? "PID \(item.pid)",
+                cpuPercent: item.cpu,
+                memoryBytes: item.mem,
+                icon: meta?.icon
+            )
+        }
+
+        let topMem = topMemRaw.map { item -> ProcessStatItem in
+            let meta = resolvedMeta[item.pid]
+            return ProcessStatItem(
+                pid: item.pid,
+                name: meta?.name ?? "PID \(item.pid)",
+                cpuPercent: item.cpu,
+                memoryBytes: item.mem,
+                icon: meta?.icon
+            )
+        }
 
         return (Array(topCPU), Array(topMem))
     }

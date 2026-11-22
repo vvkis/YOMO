@@ -41,11 +41,14 @@ final class BatteryService: @unchecked Sendable {
         }
     }
 
-    func sampleBattery() -> BatteryStats {
-        var stats = BatteryStats()
+    /// Samples battery state. When `includeDetailedIORegistry` is false (e.g. while the popover is closed),
+    /// only reads the lightweight IOPS power source summary required for the menu bar badge,
+    /// skipping the heavy `AppleSmartBattery` IORegistry dictionary dump.
+    func sampleBattery(includeDetailedIORegistry: Bool = true, previous: BatteryStats? = nil) -> BatteryStats {
+        var stats = previous ?? BatteryStats()
         stats.isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
 
-        // 1. High-level IOPS power source info
+        // 1. High-level IOPS power source info (lightweight, always fast)
         if let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
            let list = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef],
            let first = list.first,
@@ -82,7 +85,6 @@ final class BatteryService: @unchecked Sendable {
                 }
             }
         } else {
-            // Desktop Mac without internal battery
             stats.hasBattery = false
             stats.percentage = 100
             stats.isPluggedIn = true
@@ -90,7 +92,15 @@ final class BatteryService: @unchecked Sendable {
             stats.timeRemainingText = "电源供电"
         }
 
-        // 2. Detailed IORegistry AppleSmartBattery info (cycles, health, wattage)
+        guard includeDetailedIORegistry else {
+            return stats
+        }
+
+        // 2. Detailed IORegistry AppleSmartBattery info (cycles, health, wattage — sampled only when UI is open)
+        stats.systemLoadWatts = nil
+        stats.systemPowerInWatts = nil
+        stats.adapterRatedWatts = nil
+
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
         if service != 0 {
             defer { IOObjectRelease(service) }

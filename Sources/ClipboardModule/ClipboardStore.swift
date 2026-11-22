@@ -181,9 +181,9 @@ public final class ClipboardStore: ObservableObject {
         "org.keepassxc.keepassxc"
     ]
 
-    private static let maxTextBytes = 2 * 1024 * 1024        // 2 MB text cap
-    private static let maxImageBytes = 12 * 1024 * 1024      // 12 MB image cap
-    private static let maxStoredImages = 10                  // Bound disk & memory for images
+    private nonisolated static let maxTextBytes = 2 * 1024 * 1024        // 2 MB text cap
+    private nonisolated static let maxImageBytes = 12 * 1024 * 1024      // 12 MB image cap
+    private nonisolated static let maxStoredImages = 10                  // Bound disk & memory for images
 
     @Published public private(set) var entries: [ClipboardEntry] = []
     @Published public var searchQuery: String = ""
@@ -576,59 +576,79 @@ public final class ClipboardStore: ObservableObject {
         if let str = pb.string(forType: .string) {
             let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, str.utf8.count <= Self.maxTextBytes else { return }
-            let hash = Self.sha256Hex(Data(str.utf8))
-            insertOrBumpEntry(
-                ClipboardEntry(
+            ioQueue.async { [weak self] in
+                let hash = Self.sha256Hex(Data(str.utf8))
+                let entry = ClipboardEntry(
                     kind: .text,
                     text: str,
                     contentHash: hash,
                     sourceAppName: appName,
                     sourceBundleID: bundleID
                 )
-            )
+                DispatchQueue.main.async {
+                    self?.insertOrBumpEntry(entry)
+                }
+            }
             return
         }
 
-        // 3. Capture Image (screenshots / copied images) when enabled
+        // 3. Capture Image (screenshots / copied images) when enabled — decode/encode & hash 100% off main thread
         if saveImages {
-            let rawData = pb.data(forType: .png) ?? pb.data(forType: .tiff)
-            guard let imgData = rawData, imgData.count <= Self.maxImageBytes,
-                  let rep = NSBitmapImageRep(data: imgData),
-                  let pngData = rep.representation(using: .png, properties: [:]) else {
+            let directPNG = pb.data(forType: .png)
+            let rawTIFF = (directPNG == nil) ? pb.data(forType: .tiff) : nil
+            guard let rawData = directPNG ?? rawTIFF, rawData.count <= Self.maxImageBytes else {
                 return
             }
-            guard pngData.count <= Self.maxImageBytes else { return }
-
-            let hash = Self.sha256Hex(pngData)
-            if let existingIdx = latestEntries.firstIndex(where: { $0.kind == .image && $0.contentHash == hash }) {
-                var bumped = latestEntries.remove(at: existingIdx)
-                bumped.createdAt = Date()
-                latestEntries.insert(bumped, at: 0)
-                sortEntriesInPlace(&latestEntries)
-                if isUIActive { publishToUI() }
-                persistHistoryAsync()
-                return
-            }
-
-            let fileName = "\(UUID().uuidString).png"
-            let targetURL = imagesDirURL.appendingPathComponent(fileName)
+            let isAlreadyPNG = (directPNG != nil)
             let dirURL = imagesDirURL
-            ioQueue.async {
-                try? FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
-                try? pngData.write(to: targetURL, options: .atomic)
-                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: targetURL.path)
-            }
 
-            let entry = ClipboardEntry(
-                kind: .image,
-                imageFileName: fileName,
-                imageWidth: rep.pixelsWide,
-                imageHeight: rep.pixelsHigh,
-                contentHash: hash,
-                sourceAppName: appName,
-                sourceBundleID: bundleID
-            )
-            insertOrBumpEntry(entry)
+            ioQueue.async { [weak self] in
+                guard let rep = NSBitmapImageRep(data: rawData) else { return }
+                let pngData: Data
+                if isAlreadyPNG {
+                    pngData = rawData
+                } else {
+                    guard let encoded = rep.representation(using: .png, properties: [:]) else { return }
+                    pngData = encoded
+                }
+                guard pngData.count <= Self.maxImageBytes else { return }
+
+                let hash = Self.sha256Hex(pngData)
+                let pixelW = rep.pixelsWide
+                let pixelH = rep.pixelsHigh
+
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if let existingIdx = self.latestEntries.firstIndex(where: { $0.kind == .image && $0.contentHash == hash }) {
+                        var bumped = self.latestEntries.remove(at: existingIdx)
+                        bumped.createdAt = Date()
+                        self.latestEntries.insert(bumped, at: 0)
+                        self.sortEntriesInPlace(&self.latestEntries)
+                        if self.isUIActive { self.publishToUI() }
+                        self.persistHistoryAsync()
+                        return
+                    }
+
+                    let fileName = "\(UUID().uuidString).png"
+                    let targetURL = dirURL.appendingPathComponent(fileName)
+                    self.ioQueue.async {
+                        try? FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+                        try? pngData.write(to: targetURL, options: .atomic)
+                        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: targetURL.path)
+                    }
+
+                    let entry = ClipboardEntry(
+                        kind: .image,
+                        imageFileName: fileName,
+                        imageWidth: pixelW,
+                        imageHeight: pixelH,
+                        contentHash: hash,
+                        sourceAppName: appName,
+                        sourceBundleID: bundleID
+                    )
+                    self.insertOrBumpEntry(entry)
+                }
+            }
         }
     }
 
@@ -785,7 +805,7 @@ public final class ClipboardStore: ObservableObject {
         }
     }
 
-    private static func sha256Hex(_ data: Data) -> String {
+    private nonisolated static func sha256Hex(_ data: Data) -> String {
         let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
     }
