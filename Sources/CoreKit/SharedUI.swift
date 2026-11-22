@@ -42,8 +42,8 @@ public enum OverviewTileID: String, CaseIterable, Identifiable, Codable, Sendabl
         .telemetry
     ]
 
-    /// Fixed column span inside the 4-column Bento Grid (1 = 1/4 width, 2 = 1/2 width, 3 = 3/4 width, 4 = full width)
-    public var colSpan: Int {
+    /// Default column span inside the 4-column Bento Grid (1 = 1/4 width, 2 = 1/2 width, 3 = 3/4 width, 4 = full width)
+    public var defaultColSpan: Int {
         switch self {
         case .hidpi, .keepAwake, .keyboardLock:
             return 1
@@ -54,6 +54,26 @@ public enum OverviewTileID: String, CaseIterable, Identifiable, Codable, Sendabl
         case .clipboard, .volume, .telemetry:
             return 4
         }
+    }
+
+    /// Supported column spans that the user can toggle between in layout editing mode
+    public var supportedColSpans: [Int] {
+        switch self {
+        case .hidpi, .keepAwake, .keyboardLock:
+            return [1, 2, 4]
+        case .wifi, .battery, .bluetoothAudio:
+            return [2, 4]
+        case .scrollReverser:
+            return [2, 3, 4]
+        case .clipboard:
+            return [2, 4]
+        case .volume, .telemetry:
+            return [4]
+        }
+    }
+
+    public var canResizeSpan: Bool {
+        supportedColSpans.count > 1
     }
 
     public var title: String {
@@ -75,6 +95,7 @@ public enum OverviewTileID: String, CaseIterable, Identifiable, Codable, Sendabl
 /// Centralized module enable/disable toggles and overview Bento layout order shared across the Hub Console and Menu Bar shell.
 public final class ModuleSettings: ObservableObject {
     private static let tileOrderStorageKey = "overview.tileOrder.v1"
+    private static let tileSpansStorageKey = "overview.tileSpans.v1"
 
     @AppStorage("module.hidpi.enabled") public var hidpiEnabled: Bool = true {
         willSet { objectWillChange.send() }
@@ -105,8 +126,20 @@ public final class ModuleSettings: ObservableObject {
         }
     }
 
+    @Published public var overviewTileSpans: [OverviewTileID: Int] {
+        didSet {
+            var rawDict: [String: Int] = [:]
+            for (k, v) in overviewTileSpans {
+                rawDict[k.rawValue] = v
+            }
+            UserDefaults.standard.set(rawDict, forKey: Self.tileSpansStorageKey)
+        }
+    }
+
     @Published public var isEditingOverviewLayout: Bool = false
     @Published public var draggingOverviewTile: OverviewTileID? = nil
+    @Published public var dragTranslation: CGSize = .zero
+    public var dragOriginFrame: CGRect = .zero
 
     public var glassAppearance: GlassAppearanceMode {
         get { GlassAppearanceMode(rawValue: glassAppearanceRaw) ?? .dark }
@@ -118,6 +151,33 @@ public final class ModuleSettings: ObservableObject {
     public init() {
         let savedRaw = UserDefaults.standard.stringArray(forKey: Self.tileOrderStorageKey) ?? []
         self.overviewTileOrder = Self.normalizedTileOrder(from: savedRaw)
+
+        let savedSpans = UserDefaults.standard.dictionary(forKey: Self.tileSpansStorageKey) as? [String: Int] ?? [:]
+        self.overviewTileSpans = Self.normalizedTileSpans(from: savedSpans)
+    }
+
+    public func colSpan(for tile: OverviewTileID) -> Int {
+        if let custom = overviewTileSpans[tile], tile.supportedColSpans.contains(custom) {
+            return custom
+        }
+        return tile.defaultColSpan
+    }
+
+    public func setTileSpan(_ tile: OverviewTileID, span: Int) {
+        guard tile.supportedColSpans.contains(span) else { return }
+        overviewTileSpans[tile] = span
+    }
+
+    public func cycleTileSpan(_ tile: OverviewTileID) {
+        let options = tile.supportedColSpans
+        guard options.count > 1 else { return }
+        let current = colSpan(for: tile)
+        if let idx = options.firstIndex(of: current) {
+            let next = options[(idx + 1) % options.count]
+            overviewTileSpans[tile] = next
+        } else {
+            overviewTileSpans[tile] = tile.defaultColSpan
+        }
     }
 
     public func isTileEnabled(_ tile: OverviewTileID) -> Bool {
@@ -144,7 +204,13 @@ public final class ModuleSettings: ObservableObject {
     }
 
     public var isDefaultOverviewOrder: Bool {
-        overviewTileOrder == OverviewTileID.defaultOrder
+        guard overviewTileOrder == OverviewTileID.defaultOrder else { return false }
+        for tile in OverviewTileID.allCases {
+            if colSpan(for: tile) != tile.defaultColSpan {
+                return false
+            }
+        }
+        return true
     }
 
     public func moveOverviewTile(from source: OverviewTileID, to target: OverviewTileID) {
@@ -161,6 +227,11 @@ public final class ModuleSettings: ObservableObject {
 
     public func resetOverviewTileOrder() {
         overviewTileOrder = OverviewTileID.defaultOrder
+        var defaults: [OverviewTileID: Int] = [:]
+        for tile in OverviewTileID.allCases {
+            defaults[tile] = tile.defaultColSpan
+        }
+        overviewTileSpans = defaults
     }
 
     private static func normalizedTileOrder(from rawStrings: [String]) -> [OverviewTileID] {
@@ -173,6 +244,18 @@ public final class ModuleSettings: ObservableObject {
         }
         for fallback in OverviewTileID.defaultOrder where seen.insert(fallback).inserted {
             result.append(fallback)
+        }
+        return result
+    }
+
+    private static func normalizedTileSpans(from rawDict: [String: Int]) -> [OverviewTileID: Int] {
+        var result: [OverviewTileID: Int] = [:]
+        for tile in OverviewTileID.allCases {
+            if let saved = rawDict[tile.rawValue], tile.supportedColSpans.contains(saved) {
+                result[tile] = saved
+            } else {
+                result[tile] = tile.defaultColSpan
+            }
         }
         return result
     }

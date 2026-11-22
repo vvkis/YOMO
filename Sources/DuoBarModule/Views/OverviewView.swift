@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 import CoreKit
 import DisplayHiDPIModule
 import KeepAwakeModule
@@ -8,23 +7,10 @@ import ScrollReverserModule
 import ClipboardModule
 import KeyboardLockModule
 
-private struct BentoRow: Identifiable {
-    let id: String
-    let tiles: [OverviewTileID]
-
-    var totalColSpan: Int {
-        tiles.reduce(0) { $0 + $1.colSpan }
-    }
-
-    var rowHeight: CGFloat {
-        if tiles.contains(.telemetry) { return 76 }
-        if tiles.contains(.volume) { return 66 }
-        if tiles.contains(.battery) { return 58 }
-        if tiles.contains(.wifi) || tiles.contains(.bluetoothAudio) { return 54 }
-        if tiles.contains(.scrollReverser) { return 50 }
-        if tiles.contains(.clipboard) { return 48 }
-        return 52
-    }
+private struct BentoGridLayout {
+    let frames: [OverviewTileID: CGRect]
+    let spans: [OverviewTileID: Int]
+    let totalHeight: CGFloat
 }
 
 struct OverviewView: View {
@@ -55,70 +41,101 @@ struct OverviewView: View {
     private let gridTotalWidth: CGFloat = 290
     private let gridSpacing: CGFloat = 8
 
-    /// Packs the user-ordered tiles into 4-column Bento rows.
-    private var packedRows: [BentoRow] {
+    /// Computes exact 4-column Bento Grid coordinates for each enabled tile WITHOUT stretching
+    /// small tiles against the user's will. Every tile strictly respects its chosen column span (1, 2, 3, or 4).
+    private var gridLayout: BentoGridLayout {
         let activeTiles = moduleSettings.enabledOverviewTiles
-        var rows: [BentoRow] = []
-        var currentTiles: [OverviewTileID] = []
-        var currentCols = 0
+        let colUnit = (gridTotalWidth - gridSpacing * 3.0) / 4.0 // 66.5pt per column
+
+        // 1. Pack tiles into rows of at most 4 columns
+        var rows: [[(tile: OverviewTileID, span: Int)]] = []
+        var currentRow: [(tile: OverviewTileID, span: Int)] = []
+        var usedCols = 0
 
         for tile in activeTiles {
-            let span = tile.colSpan
-            if currentCols + span > 4 && !currentTiles.isEmpty {
-                rows.append(BentoRow(id: currentTiles.map(\.rawValue).joined(separator: "-"), tiles: currentTiles))
-                currentTiles = [tile]
-                currentCols = span
+            let span = min(4, max(1, moduleSettings.colSpan(for: tile)))
+            if usedCols + span > 4 && !currentRow.isEmpty {
+                rows.append(currentRow)
+                currentRow = [(tile, span)]
+                usedCols = span
             } else {
-                currentTiles.append(tile)
-                currentCols += span
-                if currentCols == 4 {
-                    rows.append(BentoRow(id: currentTiles.map(\.rawValue).joined(separator: "-"), tiles: currentTiles))
-                    currentTiles = []
-                    currentCols = 0
+                currentRow.append((tile, span))
+                usedCols += span
+                if usedCols == 4 {
+                    rows.append(currentRow)
+                    currentRow = []
+                    usedCols = 0
                 }
             }
         }
-        if !currentTiles.isEmpty {
-            rows.append(BentoRow(id: currentTiles.map(\.rawValue).joined(separator: "-"), tiles: currentTiles))
+        if !currentRow.isEmpty {
+            rows.append(currentRow)
         }
-        return rows
+
+        // 2. Assign exact CGRect (x, y, width, height) for each tile
+        var frames: [OverviewTileID: CGRect] = [:]
+        var spans: [OverviewTileID: Int] = [:]
+        var cursorY: CGFloat = 0
+
+        for (rowIdx, row) in rows.enumerated() {
+            let rowH = rowHeight(for: row.map(\.tile))
+            var cursorX: CGFloat = 0
+
+            for item in row {
+                let w = round(CGFloat(item.span) * colUnit + CGFloat(max(0, item.span - 1)) * gridSpacing)
+                frames[item.tile] = CGRect(x: round(cursorX), y: round(cursorY), width: w, height: rowH)
+                spans[item.tile] = item.span
+                cursorX += w + gridSpacing
+            }
+
+            cursorY += rowH
+            if rowIdx < rows.count - 1 {
+                cursorY += gridSpacing
+            }
+        }
+
+        return BentoGridLayout(frames: frames, spans: spans, totalHeight: max(50, cursorY))
     }
 
-    /// Computes exact fixed pixel width for each tile in a 4-column row so every row fills 290pt cleanly.
-    private func tileWidth(for tile: OverviewTileID, in row: BentoRow) -> CGFloat {
-        let count = row.tiles.count
-        let totalGaps = CGFloat(max(0, count - 1)) * gridSpacing
-        let availableWidth = gridTotalWidth - totalGaps
-        let rowSpanSum = max(1, row.totalColSpan)
-        return floor((availableWidth * CGFloat(tile.colSpan)) / CGFloat(rowSpanSum))
+    private func rowHeight(for tiles: [OverviewTileID]) -> CGFloat {
+        if tiles.contains(.telemetry) { return 76 }
+        if tiles.contains(.volume) { return 66 }
+        if tiles.contains(.battery) { return 58 }
+        if tiles.contains(.wifi) || tiles.contains(.bluetoothAudio) { return 54 }
+        if tiles.contains(.scrollReverser) { return 50 }
+        if tiles.contains(.clipboard) { return 48 }
+        return 52
     }
 
     var body: some View {
         let isEditing = moduleSettings.isEditingOverviewLayout
+        let activeTiles = moduleSettings.enabledOverviewTiles
+        let layout = gridLayout
 
         VStack(spacing: 8) {
-            // Optional Edit-Layout Banner when user is rearranging tiles
+            // Edit-Layout Banner when user is rearranging or resizing tiles
             if isEditing {
                 HStack(spacing: 6) {
                     Image(systemName: "hand.draw.fill")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Color.accentColor)
-                    Text("按住卡片拖拽调整位置")
-                        .font(.system(size: 11, weight: .medium))
+                    Text("拖拽移动 · 点角标 1×/2×/4× 缩放")
+                        .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(.primary.opacity(0.88))
+                        .lineLimit(1)
 
-                    Spacer(minLength: 4)
+                    Spacer(minLength: 2)
 
                     if !moduleSettings.isDefaultOverviewOrder {
                         Button {
-                            withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+                            withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.84)) {
                                 moduleSettings.resetOverviewTileOrder()
                             }
                         } label: {
                             Text("恢复默认")
-                                .font(.system(size: 10.5, weight: .medium))
+                                .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.secondary)
-                                .padding(.horizontal, 7)
+                                .padding(.horizontal, 6.5)
                                 .padding(.vertical, 3)
                                 .background(Capsule().fill(Color.primary.opacity(0.09)))
                         }
@@ -126,21 +143,22 @@ struct OverviewView: View {
                     }
 
                     Button {
-                        withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+                        withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.86)) {
                             moduleSettings.isEditingOverviewLayout = false
                             moduleSettings.draggingOverviewTile = nil
+                            moduleSettings.dragTranslation = .zero
                         }
                     } label: {
                         Text("完成")
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 9)
+                            .padding(.horizontal, 8.5)
                             .padding(.vertical, 3)
                             .background(Capsule().fill(Color.accentColor))
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 10)
+                .padding(.horizontal, 9)
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -148,60 +166,115 @@ struct OverviewView: View {
                 )
             }
 
-            // Dynamic 4-Column Drag-and-Drop Bento Grid
-            ForEach(packedRows) { row in
-                HStack(spacing: gridSpacing) {
-                    ForEach(row.tiles) { tile in
-                        let w = tileWidth(for: tile, in: row)
+            // Flat Single-Layer ZStack Bento Canvas (Zero view destruction during cross-row reordering!)
+            ZStack(alignment: .topLeading) {
+                ForEach(activeTiles, id: \.self) { tile in
+                    if let rect = layout.frames[tile] {
+                        let span = layout.spans[tile] ?? tile.defaultColSpan
                         let isDraggingThis = (moduleSettings.draggingOverviewTile == tile)
+                        let displayX = isDraggingThis
+                            ? (moduleSettings.dragOriginFrame.minX + moduleSettings.dragTranslation.width)
+                            : rect.minX
+                        let displayY = isDraggingThis
+                            ? (moduleSettings.dragOriginFrame.minY + moduleSettings.dragTranslation.height)
+                            : rect.minY
 
-                        tileView(for: tile, height: row.rowHeight, isEditing: isEditing)
-                            .frame(width: w, height: row.rowHeight)
+                        tileView(for: tile, span: span, height: rect.height, isEditing: isEditing)
+                            .frame(width: rect.width, height: rect.height)
                             .overlay(alignment: .topTrailing) {
-                                if isEditing {
-                                    Image(systemName: "line.3.horizontal")
-                                        .font(.system(size: 8.5, weight: .bold))
-                                        .foregroundStyle(.secondary)
-                                        .padding(4.5)
-                                        .background(Circle().fill(Color.primary.opacity(0.10)))
-                                        .padding(4)
-                                        .allowsHitTesting(false)
+                                if isEditing && tile.canResizeSpan {
+                                    Button {
+                                        withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.84)) {
+                                            moduleSettings.cycleTileSpan(tile)
+                                        }
+                                    } label: {
+                                        HStack(spacing: 2) {
+                                            Image(systemName: "arrow.left.and.right")
+                                                .font(.system(size: 7.5, weight: .bold))
+                                            Text("\(span)×")
+                                                .font(.system(size: 9, weight: .bold))
+                                                .monospacedDigit()
+                                        }
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 5.5)
+                                        .padding(.vertical, 2)
+                                        .background(Capsule().fill(Color.accentColor))
+                                        .shadow(color: Color.black.opacity(0.25), radius: 2, y: 1)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(4)
+                                    .help("点击切换组件宽度（\(tile.supportedColSpans.map { "\($0)×" }.joined(separator: " / "))）")
                                 }
                             }
                             .overlay(
                                 RoundedRectangle(cornerRadius: cornerRadius(for: tile), style: .continuous)
                                     .strokeBorder(
-                                        isEditing ? Color.accentColor.opacity(isDraggingThis ? 0.85 : 0.38) : Color.clear,
-                                        style: StrokeStyle(lineWidth: isEditing ? 1.2 : 0, dash: isDraggingThis ? [4, 3] : [])
+                                        isEditing ? Color.accentColor.opacity(isDraggingThis ? 0.95 : 0.42) : Color.clear,
+                                        style: StrokeStyle(lineWidth: isEditing ? (isDraggingThis ? 1.6 : 1.1) : 0)
                                     )
                                     .allowsHitTesting(false)
                             )
-                            .scaleEffect(isDraggingThis ? 0.96 : 1.0)
-                            .opacity(isDraggingThis ? 0.65 : 1.0)
-                            .contentShape(RoundedRectangle(cornerRadius: cornerRadius(for: tile), style: .continuous))
-                            .onDrag {
-                                moduleSettings.draggingOverviewTile = tile
-                                return NSItemProvider(object: tile.rawValue as NSString)
-                            }
-                            .onDrop(
-                                of: [UTType.text],
-                                delegate: OverviewTileDropDelegate(
-                                    targetTile: tile,
-                                    moduleSettings: moduleSettings
-                                )
+                            .scaleEffect(isDraggingThis ? 1.03 : 1.0)
+                            .shadow(
+                                color: Color.black.opacity(isDraggingThis ? 0.35 : 0.0),
+                                radius: isDraggingThis ? 10 : 0,
+                                y: isDraggingThis ? 5 : 0
+                            )
+                            .zIndex(isDraggingThis ? 20 : 1)
+                            .offset(x: displayX, y: displayY)
+                            .gesture(
+                                DragGesture(minimumDistance: 3, coordinateSpace: .named("BentoCanvas"))
+                                    .onChanged { value in
+                                        guard isEditing else { return }
+                                        if moduleSettings.draggingOverviewTile != tile {
+                                            moduleSettings.draggingOverviewTile = tile
+                                            moduleSettings.dragOriginFrame = rect
+                                        }
+                                        moduleSettings.dragTranslation = value.translation
+
+                                        let currentCenter = CGPoint(
+                                            x: moduleSettings.dragOriginFrame.midX + value.translation.width,
+                                            y: moduleSettings.dragOriginFrame.midY + value.translation.height
+                                        )
+                                        if let target = findTargetTile(at: currentCenter, excluding: tile, in: layout.frames) {
+                                            withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.82)) {
+                                                moduleSettings.moveOverviewTile(from: tile, to: target)
+                                            }
+                                        }
+                                    }
+                                    .onEnded { _ in
+                                        guard isEditing else { return }
+                                        withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.84)) {
+                                            moduleSettings.draggingOverviewTile = nil
+                                            moduleSettings.dragTranslation = .zero
+                                        }
+                                    },
+                                including: isEditing ? .all : .subviews
                             )
                             .contextMenu {
                                 Button(isEditing ? "完成排版" : "自定义拖拽排版") {
-                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                                    withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.84)) {
                                         moduleSettings.isEditingOverviewLayout.toggle()
                                         if !moduleSettings.isEditingOverviewLayout {
                                             moduleSettings.draggingOverviewTile = nil
+                                            moduleSettings.dragTranslation = .zero
+                                        }
+                                    }
+                                }
+                                if tile.canResizeSpan {
+                                    Divider()
+                                    ForEach(tile.supportedColSpans, id: \.self) { optSpan in
+                                        Button("\(spanLabel(optSpan))\(span == optSpan ? " ✓" : "")") {
+                                            withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.84)) {
+                                                moduleSettings.setTileSpan(tile, span: optSpan)
+                                            }
                                         }
                                     }
                                 }
                                 if !moduleSettings.isDefaultOverviewOrder {
-                                    Button("恢复默认排版") {
-                                        withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+                                    Divider()
+                                    Button("恢复默认排版与尺寸") {
+                                        withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.84)) {
                                             moduleSettings.resetOverviewTileOrder()
                                         }
                                     }
@@ -209,8 +282,9 @@ struct OverviewView: View {
                             }
                     }
                 }
-                .frame(width: gridTotalWidth, alignment: .leading)
             }
+            .coordinateSpace(name: "BentoCanvas")
+            .frame(width: gridTotalWidth, height: layout.totalHeight, alignment: .topLeading)
 
             // Integrated Utility Footer
             HStack {
@@ -226,10 +300,11 @@ struct OverviewView: View {
                 Spacer()
 
                 Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                    withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.84)) {
                         moduleSettings.isEditingOverviewLayout.toggle()
                         if !moduleSettings.isEditingOverviewLayout {
                             moduleSettings.draggingOverviewTile = nil
+                            moduleSettings.dragTranslation = .zero
                         }
                     }
                 } label: {
@@ -242,7 +317,7 @@ struct OverviewView: View {
                     .foregroundStyle(isEditing ? Color.accentColor : Color.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("按住任意组件卡片拖拽即可自由调整总览布局")
+                .help("开启后可直接按住卡片丝滑拖拽换位，或点击卡片右上角 1×/2×/4× 放大缩小")
 
                 Spacer()
 
@@ -268,7 +343,30 @@ struct OverviewView: View {
             .padding(.top, 1)
         }
         .padding(13)
-        .animation(.spring(response: 0.28, dampingFraction: 0.84), value: moduleSettings.overviewTileOrder)
+    }
+
+    private func findTargetTile(
+        at point: CGPoint,
+        excluding dragged: OverviewTileID,
+        in frames: [OverviewTileID: CGRect]
+    ) -> OverviewTileID? {
+        for (tile, rect) in frames where tile != dragged {
+            // Trigger swap when dragged center enters the inner 76% core of a target tile
+            let hitBox = rect.insetBy(dx: rect.width * 0.12, dy: rect.height * 0.12)
+            if hitBox.contains(point) {
+                return tile
+            }
+        }
+        return nil
+    }
+
+    private func spanLabel(_ span: Int) -> String {
+        switch span {
+        case 1: return "小尺寸 (1× · 1/4 宽)"
+        case 2: return "中尺寸 (2× · 半行宽)"
+        case 3: return "宽尺寸 (3× · 3/4 宽)"
+        default: return "大尺寸 (4× · 整行宽)"
+        }
     }
 
     private func cornerRadius(for tile: OverviewTileID) -> CGFloat {
@@ -282,27 +380,27 @@ struct OverviewView: View {
         }
     }
 
-    // MARK: - Individual Bento Tile Builders
+    // MARK: - Individual Bento Tile Builders (Adapt gracefully to 1x / 2x / 3x / 4x spans)
 
     @ViewBuilder
-    private func tileView(for tile: OverviewTileID, height: CGFloat, isEditing: Bool) -> some View {
+    private func tileView(for tile: OverviewTileID, span: Int, height: CGFloat, isEditing: Bool) -> some View {
         switch tile {
         case .wifi:
-            wifiTile(height: height, isEditing: isEditing)
+            wifiTile(span: span, height: height, isEditing: isEditing)
         case .bluetoothAudio:
-            bluetoothAudioTile(height: height, isEditing: isEditing)
+            bluetoothAudioTile(span: span, height: height, isEditing: isEditing)
         case .battery:
-            batteryTile(height: height, isEditing: isEditing)
+            batteryTile(span: span, height: height, isEditing: isEditing)
         case .hidpi:
-            hidpiTile(height: height, isEditing: isEditing)
+            hidpiTile(span: span, height: height, isEditing: isEditing)
         case .keepAwake:
-            keepAwakeTile(height: height, isEditing: isEditing)
+            keepAwakeTile(span: span, height: height, isEditing: isEditing)
         case .scrollReverser:
-            scrollReverserTile(height: height, isEditing: isEditing)
+            scrollReverserTile(span: span, height: height, isEditing: isEditing)
         case .keyboardLock:
-            keyboardLockTile(height: height, isEditing: isEditing)
+            keyboardLockTile(span: span, height: height, isEditing: isEditing)
         case .clipboard:
-            clipboardTile(height: height, isEditing: isEditing)
+            clipboardTile(span: span, height: height, isEditing: isEditing)
         case .volume:
             volumeTile(height: height, isEditing: isEditing)
         case .telemetry:
@@ -310,7 +408,7 @@ struct OverviewView: View {
         }
     }
 
-    private func wifiTile(height: CGFloat, isEditing: Bool) -> some View {
+    private func wifiTile(span: Int, height: CGFloat, isEditing: Bool) -> some View {
         HStack(spacing: 8) {
             Button {
                 if !isEditing {
@@ -345,6 +443,14 @@ struct OverviewView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 2)
+            if span >= 4, let band = store.wifi.channelBandLabel, store.wifi.isConnected {
+                Text(band)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+            }
             Image(systemName: "chevron.right")
                 .font(.system(size: 9.5, weight: .semibold))
                 .foregroundStyle(.tertiary)
@@ -362,7 +468,7 @@ struct OverviewView: View {
         }
     }
 
-    private func bluetoothAudioTile(height: CGFloat, isEditing: Bool) -> some View {
+    private func bluetoothAudioTile(span: Int, height: CGFloat, isEditing: Bool) -> some View {
         HStack(spacing: 8) {
             ZStack {
                 if audioBluetoothStore.connectedAudioBluetooth != nil {
@@ -405,7 +511,7 @@ struct OverviewView: View {
         }
     }
 
-    private func batteryTile(height: CGFloat, isEditing: Bool) -> some View {
+    private func batteryTile(span: Int, height: CGFloat, isEditing: Bool) -> some View {
         HStack(spacing: 6) {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 2) {
@@ -427,6 +533,13 @@ struct OverviewView: View {
             }
 
             Spacer(minLength: 2)
+
+            if span >= 4 {
+                Text(store.battery.powerSourceLabel)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .padding(.trailing, 6)
+            }
 
             ZStack {
                 CircularProgressRing(
@@ -460,14 +573,41 @@ struct OverviewView: View {
         }
     }
 
-    private func hidpiTile(height: CGFloat, isEditing: Bool) -> some View {
-        VStack(spacing: 3) {
-            Image(systemName: "display")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-            Text("HiDPI")
-                .font(.system(size: 10.5, weight: .medium))
-                .lineLimit(1)
+    private func hidpiTile(span: Int, height: CGFloat, isEditing: Bool) -> some View {
+        Group {
+            if span == 1 {
+                VStack(spacing: 3) {
+                    Image(systemName: "display")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Text("HiDPI")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .lineLimit(1)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    GlassNeutralCircle(size: 28) {
+                        Image(systemName: "display")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("显示器 / HiDPI")
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                        Text(displayStore.primarySummary)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 2)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 10)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .glassBentoCard(cornerRadius: 14)
@@ -481,15 +621,47 @@ struct OverviewView: View {
         }
     }
 
-    private func keepAwakeTile(height: CGFloat, isEditing: Bool) -> some View {
-        VStack(spacing: 3) {
-            Image(systemName: keepAwakeStore.isActive ? "cup.and.saucer.fill" : "cup.and.saucer")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(keepAwakeStore.isActive ? Color.orange : Color.primary)
-            Text(keepAwakeStore.isActive ? "常亮中" : "防休眠")
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(keepAwakeStore.isActive ? Color.orange : Color.primary)
-                .lineLimit(1)
+    private func keepAwakeTile(span: Int, height: CGFloat, isEditing: Bool) -> some View {
+        Group {
+            if span == 1 {
+                VStack(spacing: 3) {
+                    Image(systemName: keepAwakeStore.isActive ? "cup.and.saucer.fill" : "cup.and.saucer")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(keepAwakeStore.isActive ? Color.orange : Color.primary)
+                    Text(keepAwakeStore.isActive ? "常亮中" : "防休眠")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(keepAwakeStore.isActive ? Color.orange : Color.primary)
+                        .lineLimit(1)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    ZStack {
+                        if keepAwakeStore.isActive {
+                            Circle().fill(Color.orange).frame(width: 28, height: 28)
+                        } else {
+                            GlassNeutralCircle(size: 28) { EmptyView() }
+                        }
+                        Image(systemName: keepAwakeStore.isActive ? "cup.and.saucer.fill" : "cup.and.saucer")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(keepAwakeStore.isActive ? Color.white : Color.primary)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("防休眠")
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                        Text(keepAwakeStore.statusSubtitle)
+                            .font(.system(size: 10))
+                            .foregroundStyle(keepAwakeStore.isActive ? Color.orange : Color.secondary)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 2)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 10)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .glassBentoCard(cornerRadius: 14)
@@ -503,7 +675,7 @@ struct OverviewView: View {
         }
     }
 
-    private func scrollReverserTile(height: CGFloat, isEditing: Bool) -> some View {
+    private func scrollReverserTile(span: Int, height: CGFloat, isEditing: Bool) -> some View {
         HStack(spacing: 0) {
             HStack(spacing: 8) {
                 ZStack {
@@ -532,17 +704,19 @@ struct OverviewView: View {
 
                 Spacer(minLength: 2)
 
-                Toggle("", isOn: Binding(
-                    get: { scrollReverserStore.isActive },
-                    set: { scrollReverserStore.setEnabled($0) }
-                ))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .labelsHidden()
-                .allowsHitTesting(false)
+                if span >= 3 {
+                    Toggle("", isOn: Binding(
+                        get: { scrollReverserStore.isActive },
+                        set: { scrollReverserStore.setEnabled($0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+                    .allowsHitTesting(false)
+                }
             }
             .padding(.leading, 10)
-            .padding(.trailing, 8)
+            .padding(.trailing, 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
             .onTapGesture {
@@ -564,7 +738,7 @@ struct OverviewView: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 26, height: 36)
+                    .frame(width: 24, height: 36)
                     .contentShape(Rectangle())
             }
             .buttonStyle(HighlightRowStyle(hover: scrollHover, cornerRadius: 10))
@@ -576,15 +750,43 @@ struct OverviewView: View {
         .glassBentoCard(cornerRadius: 15)
     }
 
-    private func keyboardLockTile(height: CGFloat, isEditing: Bool) -> some View {
-        VStack(spacing: 3) {
-            Image(systemName: keyboardLockStore.isLocked ? "lock.fill" : "keyboard")
-                .font(.system(size: 13.5, weight: .semibold))
-                .foregroundStyle(keyboardLockStore.isLocked ? Color.orange : Color.primary)
-            Text(keyboardLockStore.isLocked ? "已锁定" : "键盘锁")
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(keyboardLockStore.isLocked ? Color.orange : Color.primary)
-                .lineLimit(1)
+    private func keyboardLockTile(span: Int, height: CGFloat, isEditing: Bool) -> some View {
+        Group {
+            if span == 1 {
+                VStack(spacing: 3) {
+                    Image(systemName: keyboardLockStore.isLocked ? "lock.fill" : "keyboard")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(keyboardLockStore.isLocked ? Color.orange : Color.primary)
+                    Text(keyboardLockStore.isLocked ? "已锁定" : "键盘锁")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(keyboardLockStore.isLocked ? Color.orange : Color.primary)
+                        .lineLimit(1)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    ZStack {
+                        if keyboardLockStore.isLocked {
+                            Circle().fill(Color.orange).frame(width: 28, height: 28)
+                        } else {
+                            GlassNeutralCircle(size: 28) { EmptyView() }
+                        }
+                        Image(systemName: keyboardLockStore.isLocked ? "lock.fill" : "keyboard")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(keyboardLockStore.isLocked ? Color.white : Color.primary)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("键盘锁")
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                        Text(keyboardLockStore.isLocked ? "键盘已锁定 (⌃⌥⌘U 解锁)" : "一键锁定键盘清洁擦拭")
+                            .font(.system(size: 10))
+                            .foregroundStyle(keyboardLockStore.isLocked ? Color.orange : Color.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 2)
+                }
+                .padding(.horizontal, 10)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .glassBentoCard(cornerRadius: 14)
@@ -604,7 +806,7 @@ struct OverviewView: View {
         .help(keyboardLockStore.isLocked ? "点击解锁键盘（或按 ⌃⌥⌘U）" : "清理键盘时一键锁定键盘输入")
     }
 
-    private func clipboardTile(height: CGFloat, isEditing: Bool) -> some View {
+    private func clipboardTile(span: Int, height: CGFloat, isEditing: Bool) -> some View {
         HStack(spacing: 9) {
             GlassNeutralCircle(size: 28) {
                 Image(systemName: "doc.on.clipboard")
@@ -617,7 +819,8 @@ struct OverviewView: View {
                     Text("历史剪贴板")
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(.primary)
-                    if clipboardStore.globalHotkeyEnabled {
+                        .lineLimit(1)
+                    if span >= 4 && clipboardStore.globalHotkeyEnabled {
                         Text("⇧⌘V")
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(.secondary)
@@ -780,30 +983,6 @@ struct OverviewView: View {
         case .warning: return .orange
         case .normal: return .primary
         }
-    }
-}
-
-private struct OverviewTileDropDelegate: DropDelegate {
-    let targetTile: OverviewTileID
-    let moduleSettings: ModuleSettings
-
-    func dropEntered(info: DropInfo) {
-        guard let source = moduleSettings.draggingOverviewTile,
-              source != targetTile else {
-            return
-        }
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-            moduleSettings.moveOverviewTile(from: source, to: targetTile)
-        }
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        moduleSettings.draggingOverviewTile = nil
-        return true
     }
 }
 

@@ -310,6 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         duoBarStore.resetNavigation()
         moduleSettings.isEditingOverviewLayout = false
         moduleSettings.draggingOverviewTile = nil
+        moduleSettings.dragTranslation = .zero
         clipboardStore.searchQuery = ""
         let consoleVisible = (consoleWindow?.isVisible == true)
         clipboardStore.setUIActive(consoleVisible)

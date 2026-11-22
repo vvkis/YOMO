@@ -241,8 +241,22 @@ public struct BatteryStats: Sendable {
     }
 
     public var ringColor: Color {
+        Self.batteryRingColor(
+            percentage: percentage,
+            isCharging: isCharging,
+            isLowPowerMode: isLowPowerMode
+        )
+    }
+
+    public static func batteryRingColor(
+        percentage: Int,
+        isCharging: Bool = false,
+        isLowPowerMode: Bool = false
+    ) -> Color {
         if isLowPowerMode { return .orange }
-        if percentage <= 20 && !isCharging { return .red }
+        if isCharging { return .green }
+        if percentage <= 20 { return .red }
+        if percentage <= 35 { return .orange }
         return .green
     }
 

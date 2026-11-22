@@ -223,7 +223,7 @@ private struct MiniBatteryRingCell: View {
                 CircularProgressRing(
                     progress: Double(percent) / 100.0,
                     lineWidth: 3.3,
-                    color: percent <= 20 ? .red : .green
+                    color: percent <= 20 ? .red : (percent <= 35 ? .orange : .green)
                 )
                 .frame(width: 40, height: 40)
 
