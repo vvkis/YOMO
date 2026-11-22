@@ -190,11 +190,16 @@ public final class DuoBarStore: ObservableObject {
         // and only sample lightweight kernel Mach/sysctl counters (CPU / Memory / Network bytes).
         let includeDisk = isUIActive && (tickCount % 15 == 0)
         let includeWiFiSignal = isUIActive && ((tickCount % 3 == 0) || currentPage == .wifi)
-        let includeBattery = isPopoverOpen && (currentPage == .battery)
+        let needsBatteryEstimateRefresh = isPopoverOpen
+            && !latestBattery.isPluggedIn
+            && !latestBattery.timeRemainingText.hasPrefix("剩余约")
+            && (tickCount % 3 == 0)
+        let includeBattery = (isPopoverOpen && currentPage == .battery) || needsBatteryEstimateRefresh
+        let includeDetailedBattery = isPopoverOpen && currentPage == .battery
         sampleTelemetryAsync(
             includeDisk: includeDisk,
             includeBattery: includeBattery,
-            includeDetailedBattery: includeBattery,
+            includeDetailedBattery: includeDetailedBattery,
             includeWiFi: includeWiFiSignal,
             forceRouteRefresh: false,
             forcePublish: false

@@ -66,22 +66,31 @@ final class BatteryService: @unchecked Sendable {
             stats.isCharging = (desc[kIOPSIsChargingKey as String] as? Bool) ?? false
             stats.isCharged = (desc[kIOPSIsChargedKey as String] as? Bool) ?? false
 
-            let timeToEmpty = desc[kIOPSTimeToEmptyKey as String] as? Int ?? -1
-            let timeToFull = desc[kIOPSTimeToFullChargeKey as String] as? Int ?? -1
+            let rawTimeToEmpty = (desc[kIOPSTimeToEmptyKey as String] as? NSNumber)?.intValue ?? -1
+            let rawTimeToFull = (desc[kIOPSTimeToFullChargeKey as String] as? NSNumber)?.intValue ?? -1
+
+            var resolvedTimeToEmpty = validMinutes(rawTimeToEmpty)
+            if resolvedTimeToEmpty == nil && !stats.isPluggedIn && !stats.isCharging {
+                let estSeconds = IOPSGetTimeRemainingEstimate()
+                if estSeconds > 0 && estSeconds.isFinite {
+                    resolvedTimeToEmpty = validMinutes(Int(round(estSeconds / 60.0)))
+                }
+            }
+            let resolvedTimeToFull = validMinutes(rawTimeToFull)
 
             if stats.isCharging {
-                if timeToFull > 0 {
-                    stats.timeRemainingText = "充满约 \(formatMinutes(timeToFull))"
+                if let mins = resolvedTimeToFull {
+                    stats.timeRemainingText = "充满约 \(formatMinutes(mins))"
                 } else {
                     stats.timeRemainingText = "正在充电"
                 }
             } else if stats.isPluggedIn {
                 stats.timeRemainingText = stats.isCharged ? "已充满" : "已接通电源"
             } else {
-                if timeToEmpty > 0 {
-                    stats.timeRemainingText = "剩余约 \(formatMinutes(timeToEmpty))"
+                if let mins = resolvedTimeToEmpty {
+                    stats.timeRemainingText = "剩余约 \(formatMinutes(mins))"
                 } else {
-                    stats.timeRemainingText = "估算中…"
+                    stats.timeRemainingText = stats.percentage >= 100 ? "使用电池" : "计算续航中…"
                 }
             }
         } else {
@@ -108,20 +117,38 @@ final class BatteryService: @unchecked Sendable {
             if IORegistryEntryCreateCFProperties(service, &propsRef, kCFAllocatorDefault, 0) == KERN_SUCCESS,
                let dict = propsRef?.takeRetainedValue() as? [String: Any] {
 
-                if let cycles = dict["CycleCount"] as? Int {
+                let batteryData = dict["BatteryData"] as? [String: Any]
+
+                if let cycles = (dict["CycleCount"] as? NSNumber)?.intValue {
                     stats.cycleCount = cycles
                 }
 
-                let designCap = (dict["DesignCapacity"] as? Double)
-                    ?? (dict["BatteryData"] as? [String: Any])?["DesignCapacity"] as? Double
+                // Match macOS System Settings ("Maximum Capacity"): prefer NominalChargeCapacity / DesignCapacity
+                // before falling back to AppleRawMaxCapacity (which fluctuates with temperature & battery management).
+                let designCap = numericDouble(dict["DesignCapacity"])
+                    ?? numericDouble(batteryData?["DesignCapacity"])
                     ?? 0
-                let rawMaxCap = (dict["AppleRawMaxCapacity"] as? Double)
-                    ?? (dict["NominalChargeCapacity"] as? Double)
-                    ?? (dict["BatteryData"] as? [String: Any])?["AppleRawMaxCapacity"] as? Double
+                let nominalMaxCap = numericDouble(dict["NominalChargeCapacity"])
+                    ?? numericDouble(batteryData?["NominalChargeCapacity"])
+                    ?? numericDouble(dict["AppleRawMaxCapacity"])
+                    ?? numericDouble(batteryData?["AppleRawMaxCapacity"])
                     ?? 0
 
-                if designCap > 0 && rawMaxCap > 0 {
-                    stats.healthPercent = min(100, max(1, Int(round((rawMaxCap / designCap) * 100.0))))
+                if designCap > 0 && nominalMaxCap > 0 {
+                    stats.healthPercent = min(100, max(1, Int(round((nominalMaxCap / designCap) * 100.0))))
+                }
+
+                // Hardware SMBus time-remaining fallback when IOPS has not published an estimate yet
+                if stats.isCharging && stats.timeRemainingText == "正在充电" {
+                    if let mins = validMinutes(dict["AvgTimeToFull"]) ?? validMinutes(batteryData?["AvgTimeToFull"]) {
+                        stats.timeRemainingText = "充满约 \(formatMinutes(mins))"
+                    }
+                } else if !stats.isPluggedIn && !stats.isCharging && !stats.timeRemainingText.hasPrefix("剩余约") {
+                    if let mins = validMinutes(dict["AvgTimeToEmpty"])
+                        ?? validMinutes(dict["TimeRemaining"])
+                        ?? validMinutes(batteryData?["AvgTimeToEmpty"]) {
+                        stats.timeRemainingText = "剩余约 \(formatMinutes(mins))"
+                    }
                 }
 
                 if stats.isPluggedIn,
@@ -174,6 +201,21 @@ final class BatteryService: @unchecked Sendable {
         if let url = URL(string: "x-apple.systempreferences:com.apple.Battery-Settings.extension") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    private func numericDouble(_ value: Any?) -> Double? {
+        if let n = value as? NSNumber {
+            return n.doubleValue
+        }
+        return nil
+    }
+
+    /// Accepts only genuine SMBus/IOPS minute counts (1 ... 65534), rejecting -1, 0, and 0xFFFF sentinel.
+    private func validMinutes(_ value: Any?) -> Int? {
+        guard let mins = (value as? NSNumber)?.intValue, mins > 0, mins < 65535 else {
+            return nil
+        }
+        return mins
     }
 
     private func formatMinutes(_ totalMinutes: Int) -> String {
