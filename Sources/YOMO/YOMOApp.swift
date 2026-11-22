@@ -34,6 +34,7 @@ private struct BadgeRenderKey: Equatable {
     let semanticColor: Bool
     let showBatteryPercentInRing: Bool
     let isDarkMenuBar: Bool
+    let maxScaleBucket: Int
 }
 
 @MainActor
@@ -204,6 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let topPct = mem.usagePercent
         let speedBucket = net.dominantSpeedBucket
+        let maxScale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2.0
 
         let key = BadgeRenderKey(
             batteryPct: bat.percentage,
@@ -218,7 +220,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             style: duoBarStore.prefs.badgeStyle,
             semanticColor: duoBarStore.prefs.semanticColor,
             showBatteryPercentInRing: duoBarStore.prefs.showBatteryPercentInRing,
-            isDarkMenuBar: isDarkMenuBar
+            isDarkMenuBar: isDarkMenuBar,
+            maxScaleBucket: Int(round(maxScale * 100.0))
         )
 
         if !force && key == lastRenderKey {
@@ -253,6 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             duoBarStore.onPopoverOpened()
             if moduleSettings.hidpiEnabled {
+                displayStore.setUIActive(true)
                 displayStore.refreshDisplays()
             }
             if moduleSettings.audioBluetoothEnabled {
@@ -295,7 +299,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stopOutsideClickMonitor()
         duoBarStore.resetNavigation()
         clipboardStore.searchQuery = ""
-        clipboardStore.setUIActive(consoleWindow?.isVisible == true)
+        let consoleVisible = (consoleWindow?.isVisible == true)
+        clipboardStore.setUIActive(consoleVisible)
+        displayStore.setUIActive(consoleVisible)
     }
 
     private func openHubConsole(sectionKey: String?) {
@@ -342,9 +348,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     self?.duoBarStore.setConsoleOpen(false)
-                    if self?.panel.isVisible != true {
-                        self?.clipboardStore.setUIActive(false)
-                    }
+                    let popoverVisible = (self?.panel.isVisible == true)
+                    self?.clipboardStore.setUIActive(popoverVisible)
+                    self?.displayStore.setUIActive(popoverVisible)
                 }
             }
             consoleWindow = win
@@ -352,6 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         duoBarStore.setConsoleOpen(true)
         clipboardStore.setUIActive(true)
+        displayStore.setUIActive(true)
         NSApp.activate()
         consoleWindow?.makeKeyAndOrderFront(nil)
     }

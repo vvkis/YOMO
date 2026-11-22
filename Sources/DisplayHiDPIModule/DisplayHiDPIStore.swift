@@ -170,6 +170,9 @@ public final class DisplayHiDPIStore: ObservableObject {
     private var cgModesByDisplay: [CGDirectDisplayID: [CGDisplayMode]] = [:]
     private var lastAppliedRollback: RollbackTarget?
     private var screenObserver: NSObjectProtocol?
+    private var screenChangeDebounceWorkItem: DispatchWorkItem?
+    private var isUIActive: Bool = false
+    private var needsRefreshOnOpen: Bool = false
 
     private enum RollbackTarget {
         case mpMode(displayID: CGDirectDisplayID, modeNumber: Int32)
@@ -183,16 +186,39 @@ public final class DisplayHiDPIStore: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
-                self?.refreshDisplays()
+            Task { @MainActor [weak self] in
+                self?.handleScreenParametersChanged()
             }
         }
     }
 
     deinit {
+        screenChangeDebounceWorkItem?.cancel()
         if let screenObserver {
             NotificationCenter.default.removeObserver(screenObserver)
         }
+    }
+
+    public func setUIActive(_ active: Bool) {
+        isUIActive = active
+        if active && needsRefreshOnOpen {
+            refreshDisplays()
+        }
+    }
+
+    private func handleScreenParametersChanged() {
+        guard isUIActive else {
+            needsRefreshOnOpen = true
+            return
+        }
+        screenChangeDebounceWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.refreshDisplays()
+            }
+        }
+        screenChangeDebounceWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 
     public var selectedDisplay: DisplayDeviceInfo? {
@@ -210,6 +236,10 @@ public final class DisplayHiDPIStore: ObservableObject {
     }
 
     public func refreshDisplays() {
+        needsRefreshOnOpen = false
+        screenChangeDebounceWorkItem?.cancel()
+        screenChangeDebounceWorkItem = nil
+
         var displayIDs = [CGDirectDisplayID](repeating: 0, count: 16)
         var count: UInt32 = 0
         guard CGGetOnlineDisplayList(UInt32(displayIDs.count), &displayIDs, &count) == .success else {
