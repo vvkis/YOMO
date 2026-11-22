@@ -70,7 +70,9 @@ let package = Package(
                 .linkedFramework("SwiftUI"),
                 .linkedFramework("Carbon"),
                 .linkedFramework("CoreGraphics"),
-                .linkedFramework("ApplicationServices")
+                .linkedFramework("ApplicationServices"),
+                .linkedFramework("ImageIO"),
+                .linkedFramework("Vision")
             ]
         ),
         .target(

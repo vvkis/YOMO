@@ -4,6 +4,54 @@ import Carbon
 import CryptoKit
 import CoreGraphics
 import ApplicationServices
+import ImageIO
+import Vision
+
+public struct ClipboardBarcodeItem: Identifiable, Hashable, Sendable {
+    public let id: UUID
+    public let payload: String
+    public let symbology: String
+    public let isWebURL: Bool
+
+    public init(id: UUID = UUID(), payload: String, symbology: String, isWebURL: Bool) {
+        self.id = id
+        self.payload = payload
+        self.symbology = symbology
+        self.isWebURL = isWebURL
+    }
+}
+
+public struct ClipboardOCRResult: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let entryID: UUID
+    public let sourceLabel: String
+    public let rawText: String
+    public let mergedText: String
+    public let barcodes: [ClipboardBarcodeItem]
+    public let errorMessage: String?
+
+    public init(
+        id: UUID = UUID(),
+        entryID: UUID,
+        sourceLabel: String,
+        rawText: String,
+        mergedText: String,
+        barcodes: [ClipboardBarcodeItem],
+        errorMessage: String? = nil
+    ) {
+        self.id = id
+        self.entryID = entryID
+        self.sourceLabel = sourceLabel
+        self.rawText = rawText
+        self.mergedText = mergedText
+        self.barcodes = barcodes
+        self.errorMessage = errorMessage
+    }
+
+    public var hasContent: Bool {
+        !rawText.isEmpty || !barcodes.isEmpty
+    }
+}
 
 public enum ClipboardItemKind: String, Codable, Sendable {
     case text
@@ -189,6 +237,10 @@ public final class ClipboardStore: ObservableObject {
     @Published public var searchQuery: String = ""
     @Published public var activeFilter: ClipboardFilter = .all
     @Published public var statusMessage: String? = nil
+    @Published public private(set) var activeOCRResult: ClipboardOCRResult? = nil
+    @Published public private(set) var ocrScanningEntryID: UUID? = nil
+    @Published public var ocrMergeLines: Bool = false
+    @Published public private(set) var ocrToastMessage: String? = nil
 
     @Published public var maxHistoryCount: Int {
         didSet {
@@ -252,6 +304,7 @@ public final class ClipboardStore: ObservableObject {
     private var isScreenAsleep: Bool = false
     private var workspaceObservers: [NSObjectProtocol] = []
     private var hotKeyManager: ClipboardHotKeyManager?
+    private var ocrToastClearWorkItem: DispatchWorkItem?
     private let ioQueue = DispatchQueue(label: "com.yomo.clipboard.io", qos: .utility)
     private let thumbnailCache = NSCache<NSString, NSImage>()
     private let appIconCache = NSCache<NSString, NSImage>()
@@ -316,6 +369,11 @@ public final class ClipboardStore: ObservableObject {
             purgeExpiredIfDue(force: true)
             checkPasteboardNow()
             publishToUI()
+        } else {
+            ocrToastClearWorkItem?.cancel()
+            ocrScanningEntryID = nil
+            activeOCRResult = nil
+            ocrToastMessage = nil
         }
     }
 
@@ -416,6 +474,9 @@ public final class ClipboardStore: ObservableObject {
 
     public func deleteEntry(_ entry: ClipboardEntry) {
         latestEntries.removeAll { $0.id == entry.id }
+        if activeOCRResult?.entryID == entry.id {
+            dismissOCRResult()
+        }
         if let fileName = entry.imageFileName {
             removeImageFileAsync(fileName)
         }
@@ -424,8 +485,12 @@ public final class ClipboardStore: ObservableObject {
     }
 
     public func clearUnpinned() {
+        let removedIDs = Set(latestEntries.filter { !$0.isPinned }.map(\.id))
         let removedImages = latestEntries.filter { !$0.isPinned }.compactMap(\.imageFileName)
         latestEntries.removeAll { !$0.isPinned }
+        if let activeID = activeOCRResult?.entryID, removedIDs.contains(activeID) {
+            dismissOCRResult()
+        }
         for fileName in removedImages {
             removeImageFileAsync(fileName)
         }
@@ -436,11 +501,172 @@ public final class ClipboardStore: ObservableObject {
     public func clearAll() {
         let removedImages = latestEntries.compactMap(\.imageFileName)
         latestEntries.removeAll()
+        dismissOCRResult()
         for fileName in removedImages {
             removeImageFileAsync(fileName)
         }
         publishToUI()
         persistHistoryAsync()
+    }
+
+    // MARK: - On-Demand Vision OCR & Barcode Scanning
+
+    public func recognizeEntry(_ entry: ClipboardEntry) {
+        guard entry.kind == .image, let fileName = entry.imageFileName else { return }
+        let fileURL = imagesDirURL.appendingPathComponent(fileName)
+        let entryID = entry.id
+        let sourceLabel = entry.singleLinePreview
+
+        ocrToastClearWorkItem?.cancel()
+        ocrToastMessage = nil
+        ocrScanningEntryID = entryID
+
+        ioQueue.async { [weak self] in
+            let result = Self.performVisionScan(fileURL: fileURL, entryID: entryID, sourceLabel: sourceLabel)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard self.ocrScanningEntryID == entryID else { return }
+                self.ocrScanningEntryID = nil
+                self.activeOCRResult = result
+            }
+        }
+    }
+
+    public func dismissOCRResult() {
+        ocrToastClearWorkItem?.cancel()
+        ocrScanningEntryID = nil
+        activeOCRResult = nil
+        ocrToastMessage = nil
+    }
+
+    public func entry(for id: UUID) -> ClipboardEntry? {
+        latestEntries.first { $0.id == id } ?? entries.first { $0.id == id }
+    }
+
+    /// Writes OCR/barcode text to the system pasteboard WITHOUT adding a duplicate entry
+    /// into clipboard history and WITHOUT closing or stealing focus from the popover.
+    public func copyOCRText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        lastChangeCount = pb.changeCount
+
+        showOCRToast("已复制到剪贴板")
+    }
+
+    public func openBarcodeURL(_ payload: String) {
+        let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              (scheme == "http" || scheme == "https"),
+              url.host != nil else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func showOCRToast(_ message: String) {
+        ocrToastClearWorkItem?.cancel()
+        ocrToastMessage = message
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.ocrToastMessage = nil
+            }
+        }
+        ocrToastClearWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+    }
+
+    private nonisolated static func performVisionScan(
+        fileURL: URL,
+        entryID: UUID,
+        sourceLabel: String
+    ) -> ClipboardOCRResult {
+        guard let imageSource = CGImageSourceCreateWithURL(fileURL as CFURL, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+            return ClipboardOCRResult(
+                entryID: entryID,
+                sourceLabel: sourceLabel,
+                rawText: "",
+                mergedText: "",
+                barcodes: [],
+                errorMessage: "图片文件不可读或已清理"
+            )
+        }
+
+        let textRequest = VNRecognizeTextRequest()
+        textRequest.recognitionLevel = .accurate
+        textRequest.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
+        textRequest.usesLanguageCorrection = true
+        textRequest.automaticallyDetectsLanguage = true
+
+        let barcodeRequest = VNDetectBarcodesRequest()
+
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        do {
+            try handler.perform([textRequest, barcodeRequest])
+        } catch {
+            return ClipboardOCRResult(
+                entryID: entryID,
+                sourceLabel: sourceLabel,
+                rawText: "",
+                mergedText: "",
+                barcodes: [],
+                errorMessage: "识别失败：\(error.localizedDescription)"
+            )
+        }
+
+        let textLines: [String] = (textRequest.results ?? []).compactMap { obs in
+            obs.topCandidates(1).first?.string
+        }
+        let rawText = textLines.joined(separator: "\n")
+        let mergedText = mergeLinesSmartly(textLines)
+
+        var seenPayloads = Set<String>()
+        var barcodes: [ClipboardBarcodeItem] = []
+        for obs in (barcodeRequest.results ?? []) {
+            guard let payload = obs.payloadStringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !payload.isEmpty,
+                  seenPayloads.insert(payload).inserted else {
+                continue
+            }
+            let isWeb: Bool = {
+                guard let url = URL(string: payload),
+                      let scheme = url.scheme?.lowercased(),
+                      (scheme == "http" || scheme == "https"),
+                      url.host != nil else { return false }
+                return true
+            }()
+            let label = obs.symbology == .qr ? "二维码" : "条形码"
+            barcodes.append(ClipboardBarcodeItem(payload: payload, symbology: label, isWebURL: isWeb))
+        }
+
+        return ClipboardOCRResult(
+            entryID: entryID,
+            sourceLabel: sourceLabel,
+            rawText: rawText,
+            mergedText: mergedText,
+            barcodes: barcodes
+        )
+    }
+
+    private nonisolated static func mergeLinesSmartly(_ lines: [String]) -> String {
+        let cleaned = lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return "" }
+        var result = cleaned[0]
+        for next in cleaned.dropFirst() {
+            if let lastScalar = result.unicodeScalars.last,
+               let firstScalar = next.unicodeScalars.first,
+               lastScalar.isASCII, firstScalar.isASCII {
+                result += " " + next
+            } else {
+                result += next
+            }
+        }
+        return result
     }
 
     public func thumbnail(for entry: ClipboardEntry) -> NSImage? {
