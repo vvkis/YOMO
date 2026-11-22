@@ -197,6 +197,31 @@ Every extension module can be enabled or disabled independently in **Hub Console
 
 ---
 
+### 6. Clipboard History
+
+<table>
+  <tr>
+    <td width="38%" align="center">
+      <img src="docs/screenshots/popover-clipboard.png" alt="Clipboard History Subpage" width="270" />
+    </td>
+    <td width="62%" valign="top">
+      <p><b>Highlights</b></p>
+      <ul>
+        <li><b>Instant Global Hotkey (<code>⇧⌘V</code>)</b>: Zero-permission native Carbon global shortcut lets you summon Clipboard History from any app.</li>
+        <li><b>Text &amp; Image History</b>: Automatically records copied text and screenshots (with off-main-thread PNG encoding), displaying source app icons and relative timestamps.</li>
+        <li><b>Privacy-Aware Filtering</b>: Automatically skips sensitive pasteboard types (<code>ConcealedType</code> / <code>TransientType</code>) and password managers (Apple Passwords, 1Password, Bitwarden, KeePassXC, etc.).</li>
+        <li><b>Search, Pin &amp; Auto-Cleanup</b>: Instant search by text or source app, All / Text / Image / Pinned filters, one-click pinning, and a configurable auto-cleanup timer with custom retention hours.</li>
+      </ul>
+      <p><b>Example</b></p>
+      <blockquote>
+        Copied several terminal commands, URLs, and screenshots in a row and need one from five minutes ago? Press <code>⇧⌘V</code> → filter or search → click to restore instantly, or pin frequently used snippets.
+      </blockquote>
+    </td>
+  </tr>
+</table>
+
+---
+
 ### Appearance & Customization
 
 <table>
@@ -221,7 +246,7 @@ Every extension module can be enabled or disabled independently in **Hub Console
 
 ### Option 1: Download Release DMG (Recommended)
 
-1. Download **`YOMO-v1.1.0.dmg`** from the [Releases page](https://github.com/vvkis/YOMO/releases) (clean **`YOMO-v1.1.0-source.zip`** and `SHA256SUMS.txt` are also provided).
+1. Download **`YOMO-v1.2.0.dmg`** from the [Releases page](https://github.com/vvkis/YOMO/releases) (clean **`YOMO-v1.2.0-source.zip`** and `SHA256SUMS.txt` are also provided).
 2. Open the `.dmg` and drag **`YOMO.app`** into **`Applications`**.
 3. Launch **YOMO**, open **Appearance & Style**, and enable **Launch at Login**.
 
@@ -256,7 +281,7 @@ open dist/YOMO.app
 
 # 3. (Optional) Build Release DMG + clean source ZIP + SHA256 checksums
 ./scripts/build-release.sh
-# Outputs: dist/YOMO-v1.1.0.dmg, dist/YOMO-v1.1.0-source.zip, dist/SHA256SUMS.txt
+# Outputs: dist/YOMO-v1.2.0.dmg, dist/YOMO-v1.2.0-source.zip, dist/SHA256SUMS.txt
 ```
 
 ### Permissions

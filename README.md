@@ -16,7 +16,7 @@
 
 **简体中文** · [English](README_EN.md)
 
-[核心特性](#为什么选择-yomo) · [菜单栏样式](#菜单栏状态徽章) · [模块与示例](#五大核心模块与使用示例) · [快速开始](#快速开始) · [常见问题](#常见问题)
+[核心特性](#为什么选择-yomo) · [菜单栏样式](#菜单栏状态徽章) · [模块与示例](#六大核心模块与使用示例) · [快速开始](#快速开始) · [常见问题](#常见问题)
 
 <br />
 
@@ -71,7 +71,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ---
 
-## 五大核心模块与使用示例
+## 六大核心模块与使用示例
 
 所有扩展模块均可在「**控制台 → 模块总览**」中独立开关。不需要的模块关闭后不会参与面板渲染或刷新。
 
@@ -197,6 +197,31 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ---
 
+### 6. 历史剪贴板（Clipboard）
+
+<table>
+  <tr>
+    <td width="38%" align="center">
+      <img src="docs/screenshots/popover-clipboard.png" alt="历史剪贴板二级页" width="270" />
+    </td>
+    <td width="62%" valign="top">
+      <p><b>核心能力</b></p>
+      <ul>
+        <li><b>全局快捷键秒呼</b>：内置零权限原生 Carbon 热键 <code>⇧⌘V</code>（Shift+Cmd+V），在任意应用内一键唤出历史剪贴板并快速回贴。</li>
+        <li><b>文本与图片双记录</b>：自动记录复制的文本与截图（图片在后台线程异步编码，不卡主线程），带来源应用图标与相对时间。</li>
+        <li><b>隐私安全过滤</b>：自动识别并跳过 1Password / Bitwarden / 系统密码等密码管理器及敏感标记（<code>ConcealedType</code> / <code>TransientType</code>），绝不记录密码。</li>
+        <li><b>搜索、置顶与自动清理</b>：支持按内容或来源应用即时搜索、「全部 / 文本 / 图片 / 置顶」分类筛选、一键置顶常用片段，以及可自定义保留小时数的自动清理开关。</li>
+      </ul>
+      <p><b>使用示例</b></p>
+      <blockquote>
+        连续复制了多条终端命令、文档链接和截图，想找回刚才那一条？直接按 <code>⇧⌘V</code> → 输入关键词或点「图片 / 置顶」筛选 → 一键复原，常用命令还能直接置顶常驻。
+      </blockquote>
+    </td>
+  </tr>
+</table>
+
+---
+
 ### 外观与个性化设置
 
 <table>
@@ -221,7 +246,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ### 方式一：直接下载 Release 安装包（推荐）
 
-1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.1.0.dmg`**（同时提供 **`YOMO-v1.1.0-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
+1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.2.0.dmg`**（同时提供 **`YOMO-v1.2.0-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
 2. 双击打开 `.dmg`，将 **`YOMO.app`** 拖入 **`Applications`（应用程序）** 文件夹。
 3. 打开 **YOMO**，在浮窗底部点击 **「外观与样式」→ 开启「开机自动启动」**，即可随系统静默常驻。
 
@@ -256,7 +281,7 @@ open dist/YOMO.app
 
 # 3.（可选）一键生成 DMG 安装包 + 干净源码 ZIP + SHA256 校验文件
 ./scripts/build-release.sh
-# 产物输出至 dist/YOMO-v1.1.0.dmg、dist/YOMO-v1.1.0-source.zip、dist/SHA256SUMS.txt
+# 产物输出至 dist/YOMO-v1.2.0.dmg、dist/YOMO-v1.2.0-source.zip、dist/SHA256SUMS.txt
 ```
 
 ### 首次运行权限说明
