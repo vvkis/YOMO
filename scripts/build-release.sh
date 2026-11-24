@@ -28,6 +28,7 @@ trap cleanup EXIT
 
 # 2. Build DMG installer (YOMO.app + /Applications symlink)
 echo "💿 Creating $DMG_NAME..."
+rm -f "$DIST_DIR"/YOMO-v*.dmg "$DIST_DIR"/YOMO-v*-source.zip
 mkdir -p "$DMG_STAGE"
 cp -R "$APP_BUNDLE" "$DMG_STAGE/YOMO.app"
 ln -s /Applications "$DMG_STAGE/Applications"
