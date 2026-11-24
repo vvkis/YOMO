@@ -44,6 +44,7 @@ private struct BadgeRenderKey: Equatable {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusItemAutosaveName = "YOMOStatusItem"
     private var statusItem: NSStatusItem!
+    private var statusItemGeneration: UInt64 = 0
     private var panel: GlassPopoverPanel!
     private var consoleWindow: NSWindow?
     private var consoleCloseObserver: NSObjectProtocol?
@@ -205,36 +206,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureStatusItem(forceRightPosition: Bool) {
+        statusItemGeneration &+= 1
+        let gen = statusItemGeneration
+
+        let hadExisting = (statusItem != nil)
         if let existing = statusItem {
             if panel?.isEffectivelyVisible == true {
                 panel.dismissAnimated()
             }
+            // Per NSStatusItem.h: setting autosaveName to nil clears saved position state in AppKit/MenuBarAgent
+            // so a previous manual ⌘-drag coordinate does not override the requested right-edge position.
+            existing.autosaveName = nil
             NSStatusBar.system.removeStatusItem(existing)
             statusItem = nil
         }
 
-        if forceRightPosition {
-            // AppKit sorts NSStatusItem from right to left by ascending "NSStatusItem Preferred Position <autosaveName>".
-            // 212pt sits cleanly to the left of macOS's default right-side system cluster (Clock + Control Center + Spotlight)
-            // and to the right of all third-party apps.
-            let targetOffset = 212.0
-            UserDefaults.standard.set(targetOffset, forKey: "NSStatusItem Preferred Position \(statusItemAutosaveName)")
-            UserDefaults.standard.set(targetOffset, forKey: "NSStatusItem Preferred Position Item-0")
+        let createItem: @MainActor @Sendable () -> Void = { [weak self] in
+            guard let self, self.statusItemGeneration == gen else { return }
+
+            if forceRightPosition {
+                // AppKit sorts NSStatusItem from right to left by ascending "NSStatusItem Preferred Position <autosaveName>".
+                // 212pt sits cleanly to the left of macOS's default right-side system cluster (Clock + Control Center + Spotlight)
+                // and to the right of all third-party apps.
+                let targetOffset = 212.0
+                UserDefaults.standard.set(targetOffset, forKey: "NSStatusItem Preferred Position \(self.statusItemAutosaveName)")
+                UserDefaults.standard.set(targetOffset, forKey: "NSStatusItem Preferred Position Item-0")
+                CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication)
+            }
+
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            item.autosaveName = self.statusItemAutosaveName
+            if let button = item.button {
+                button.imagePosition = .imageOnly
+                button.imageScaling = .scaleNone
+                button.target = self
+                button.action = #selector(self.togglePanel(_:))
+                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+                button.toolTip = "YOMO — You Only Menu Once"
+            }
+            self.statusItem = item
+            self.lastRenderKey = nil
+            self.redrawStatusBadge(force: true)
         }
 
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.autosaveName = statusItemAutosaveName
-        if let button = item.button {
-            button.imagePosition = .imageOnly
-            button.imageScaling = .scaleNone
-            button.target = self
-            button.action = #selector(togglePanel(_:))
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            button.toolTip = "YOMO — You Only Menu Once"
+        if hadExisting {
+            // Yield briefly so MenuBarAgent finishes tearing down the old status item before reading the fresh preferred position.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: createItem)
+        } else {
+            createItem()
         }
-        statusItem = item
-        lastRenderKey = nil
-        redrawStatusBadge(force: true)
     }
 
     @objc private func handleSystemThemeChanged() {
