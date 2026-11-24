@@ -59,6 +59,7 @@ public enum CleanerCategoryID: String, CaseIterable, Identifiable, Sendable {
     case systemAndLogs
     case browsersAndApps
     case developerCaches
+    case appLeftovers
     case installers
     case trash
     case largeDownloads
@@ -70,6 +71,7 @@ public enum CleanerCategoryID: String, CaseIterable, Identifiable, Sendable {
         case .systemAndLogs: return "系统与应用缓存日志"
         case .browsersAndApps: return "浏览器与桌面软件缓存"
         case .developerCaches: return "开发者工具与包管理缓存"
+        case .appLeftovers: return "已卸载软件残留"
         case .installers: return "旧安装包与磁盘镜像"
         case .trash: return "废纸篓"
         case .largeDownloads: return "下载目录大文件 (≥100MB)"
@@ -81,6 +83,7 @@ public enum CleanerCategoryID: String, CaseIterable, Identifiable, Sendable {
         case .systemAndLogs: return "应用缓存与日志"
         case .browsersAndApps: return "浏览器与软件"
         case .developerCaches: return "开发者缓存"
+        case .appLeftovers: return "卸载残留"
         case .installers: return "旧安装包"
         case .trash: return "废纸篓"
         case .largeDownloads: return "大文件"
@@ -92,6 +95,7 @@ public enum CleanerCategoryID: String, CaseIterable, Identifiable, Sendable {
         case .systemAndLogs: return "自动跳过 Apple 核心服务与 iCloud，仅清理可重建的用户缓存与崩溃日志"
         case .browsersAndApps: return "仅清理网页/GPU/代码缓存，不触碰书签、Cookie、密码与聊天记录"
         case .developerCaches: return "清理 macOS「系统数据」膨胀大户：Xcode、Homebrew、npm、pip、Cargo 等"
+        case .appLeftovers: return "保守比对本机全部已安装应用与 LaunchServices，检出孤儿残留并移至废纸篓"
         case .installers: return "下载与桌面中的 .dmg / .pkg / .xip 安装包，清理时安全移至废纸篓"
         case .trash: return "永久清空 ~/.Trash 中已删除的文件以立即回收 APFS 空间"
         case .largeDownloads: return "列出 ~/Downloads 中 ≥100 MB 的单文件供手动勾选，清理时移至废纸篓"
@@ -103,6 +107,7 @@ public enum CleanerCategoryID: String, CaseIterable, Identifiable, Sendable {
         case .systemAndLogs: return "doc.text.magnifyingglass"
         case .browsersAndApps: return "globe"
         case .developerCaches: return "hammer.fill"
+        case .appLeftovers: return "app.dashed"
         case .installers: return "shippingbox.fill"
         case .trash: return "trash.fill"
         case .largeDownloads: return "externaldrive.fill"
@@ -114,10 +119,80 @@ public enum CleanerCategoryID: String, CaseIterable, Identifiable, Sendable {
         case .systemAndLogs: return .teal
         case .browsersAndApps: return .blue
         case .developerCaches: return .indigo
+        case .appLeftovers: return .pink
         case .installers: return .orange
         case .trash: return .red
         case .largeDownloads: return .purple
         }
+    }
+}
+
+// MARK: - Startup / Login Items Models
+
+public enum SpaceCleanerConsoleTab: String, CaseIterable, Identifiable {
+    case cleanup = "空间清理"
+    case startup = "开机启动项"
+
+    public var id: String { rawValue }
+}
+
+public enum StartupItemScope: String, CaseIterable, Identifiable, Sendable {
+    case userLaunchAgent
+    case globalLaunchAgent
+    case globalLaunchDaemon
+    case appLoginItem
+
+    public var id: String { rawValue }
+
+    public var badgeTitle: String {
+        switch self {
+        case .userLaunchAgent: return "用户代理"
+        case .globalLaunchAgent: return "系统代理"
+        case .globalLaunchDaemon: return "系统守护"
+        case .appLoginItem: return "应用登录项"
+        }
+    }
+
+    public var tintColor: Color {
+        switch self {
+        case .userLaunchAgent: return .blue
+        case .globalLaunchAgent: return .indigo
+        case .globalLaunchDaemon: return .purple
+        case .appLoginItem: return .teal
+        }
+    }
+}
+
+public enum StartupItemFilter: String, CaseIterable, Identifiable {
+    case all = "全部"
+    case user = "用户代理"
+    case system = "系统级"
+    case loginItems = "应用内嵌"
+    case orphaned = "已失效残留"
+
+    public var id: String { rawValue }
+}
+
+public struct StartupItemInfo: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let label: String
+    public let displayName: String
+    public let scope: StartupItemScope
+    public let sourcePath: String
+    public let executablePath: String?
+    public let runAtLoad: Bool
+    public let keepAlive: Bool
+    public let isDisabledInPlist: Bool
+    public let isRunning: Bool
+    public let isOrphanedBinary: Bool
+    public let canMoveToTrash: Bool
+
+    public var displaySourcePath: String {
+        let home = NSHomeDirectory()
+        if sourcePath.hasPrefix(home) {
+            return "~" + sourcePath.dropFirst(home.count)
+        }
+        return sourcePath
     }
 }
 
@@ -315,6 +390,14 @@ public final class SpaceCleanerStore: ObservableObject {
     @Published public private(set) var lastReport: CleanupReport? = nil
     @Published public var expandedCategories: Set<CleanerCategoryID> = [.systemAndLogs, .browsersAndApps, .developerCaches]
 
+    // Startup / Login Items Inspector state (on-demand, zero background polling)
+    @Published public var consoleTab: SpaceCleanerConsoleTab = .cleanup
+    @Published public var startupFilter: StartupItemFilter = .all
+    @Published public private(set) var startupItems: [StartupItemInfo] = []
+    @Published public private(set) var isScanningStartupItems: Bool = false
+    @Published public private(set) var hasScannedStartupItems: Bool = false
+    @Published public var startupStatusMessage: String? = nil
+
     private var scanGeneration: UInt64 = 0
     private let workQueue = DispatchQueue(label: "com.yomo.spacecleaner.worker", qos: .userInitiated)
 
@@ -482,8 +565,15 @@ public final class SpaceCleanerStore: ObservableObject {
         cleanProgressText = "正在安全清理 \(selectedItems.count) 项…"
         lastReport = nil
 
+        let runningBundleIDs = Set(
+            NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier?.lowercased() }
+        )
+
         workQueue.async { [weak self] in
-            let report = SpaceCleanerEngine.executeCleanup(items: selectedItems) { [weak self] statusText in
+            let report = SpaceCleanerEngine.executeCleanup(
+                items: selectedItems,
+                runningBundleIDs: runningBundleIDs
+            ) { [weak self] statusText in
                 Task { @MainActor [weak self] in
                     self?.cleanProgressText = statusText
                 }
@@ -511,6 +601,71 @@ public final class SpaceCleanerStore: ObservableObject {
         }
     }
 
+    // MARK: - Startup Items Inspector (Zero Subprocess, On-Demand)
+
+    public var filteredStartupItems: [StartupItemInfo] {
+        switch startupFilter {
+        case .all:
+            return startupItems
+        case .user:
+            return startupItems.filter { $0.scope == .userLaunchAgent }
+        case .system:
+            return startupItems.filter { $0.scope == .globalLaunchAgent || $0.scope == .globalLaunchDaemon }
+        case .loginItems:
+            return startupItems.filter { $0.scope == .appLoginItem }
+        case .orphaned:
+            return startupItems.filter(\.isOrphanedBinary)
+        }
+    }
+
+    public var runningStartupCount: Int {
+        startupItems.filter(\.isRunning).count
+    }
+
+    public var orphanedStartupCount: Int {
+        startupItems.filter(\.isOrphanedBinary).count
+    }
+
+    public func refreshStartupItems() {
+        guard !isScanningStartupItems else { return }
+        isScanningStartupItems = true
+        let runningSnap = Self.snapshotRunningProcesses()
+
+        workQueue.async { [weak self] in
+            let items = SpaceCleanerEngine.scanStartupItems(runningSnap: runningSnap)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.startupItems = items
+                self.isScanningStartupItems = false
+                self.hasScannedStartupItems = true
+            }
+        }
+    }
+
+    /// Safely moves a user-owned ~/Library/LaunchAgents/*.plist to macOS Trash (reversible via Put Back).
+    public func trashUserStartupItem(_ item: StartupItemInfo) {
+        guard item.canMoveToTrash, item.scope == .userLaunchAgent else { return }
+        let home = NSHomeDirectory()
+        let allowedDir = URL(fileURLWithPath: home).appendingPathComponent("Library/LaunchAgents").standardizedFileURL.path
+        let targetURL = URL(fileURLWithPath: item.sourcePath).standardizedFileURL
+        guard targetURL.path.hasPrefix(allowedDir + "/"), targetURL.pathExtension.lowercased() == "plist" else {
+            return
+        }
+        do {
+            try FileManager.default.trashItem(at: targetURL, resultingItemURL: nil)
+            startupItems.removeAll { $0.id == item.id }
+            startupStatusMessage = "已将「\(item.displayName)」的启动配置移至废纸篓，下次登录生效（可在废纸篓中还原）"
+        } catch {
+            startupStatusMessage = "移除「\(item.displayName)」失败：\(error.localizedDescription)"
+        }
+    }
+
+    public func openLoginItemsSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     // MARK: - Finder & Permissions Helpers
 
     public func revealInFinder(_ path: String) {
@@ -533,11 +688,34 @@ public final class SpaceCleanerStore: ObservableObject {
     private static func snapshotRunningApps() -> [String: String] {
         var map: [String: String] = [:]
         for app in NSWorkspace.shared.runningApplications {
+            let display = app.localizedName ?? app.bundleIdentifier ?? ""
             if let bid = app.bundleIdentifier?.lowercased() {
-                map[bid] = app.localizedName ?? bid
+                map[bid] = display
+            }
+            if let name = app.localizedName?.lowercased(), !name.isEmpty {
+                map["name:\(name)"] = display
             }
         }
         return map
+    }
+
+    private static func snapshotRunningProcesses() -> (bundleIDs: Set<String>, executablePaths: Set<String>, executableNames: Set<String>) {
+        var bids = Set<String>()
+        var paths = Set<String>()
+        var names = Set<String>()
+        for app in NSWorkspace.shared.runningApplications {
+            if let bid = app.bundleIdentifier?.lowercased() {
+                bids.insert(bid)
+            }
+            if let execURL = app.executableURL {
+                paths.insert(execURL.standardizedFileURL.path.lowercased())
+                names.insert(execURL.lastPathComponent.lowercased())
+            }
+            if let loc = app.localizedName?.lowercased() {
+                names.insert(loc)
+            }
+        }
+        return (bids, paths, names)
     }
 }
 
@@ -552,26 +730,47 @@ private enum SpaceCleanerEngine {
     /// Hard-coded protected paths / bundle prefixes that must NEVER be cleaned or offered for deletion
     private static let protectedCacheEntryPrefixes: [String] = [
         "com.apple.",
+        "apple.",
+        "group.com.apple.",
         "cloudkit",
         "familycircle",
         "knowledge",
-        "geoServices",
+        "geoservices",
         "passkit",
         "com.yomo.",
         "yomo"
     ]
 
     private static let protectedCacheExactNames: Set<String> = [
-        "com.spotify.client", // Offline downloaded Spotify music resides under Caches on macOS
+        "com.spotify.client",    // Offline downloaded Spotify music resides under Caches on macOS
+        "com.netease.163music",  // NetEase Cloud Music may store offline audio/cache data
+        "com.tencent.QQMusicMac",
+        "com.google.Keystone",   // Google auto-updater lock
         "FamilyCircle",
         "CloudKit",
         "PassKit",
         "GeoServices",
         "SiriTTS",
         "VoiceTrigger",
+        "CrashReporter",
+        "Metadata",
+        "Spotlight",
         "com.apple.bird",
         "com.apple.nsurlsessiond",
         "com.apple.Safari"
+    ]
+
+    /// Protected reverse-DNS prefixes that must NEVER be flagged as uninstalled app leftovers
+    private static let protectedLeftoverPrefixes: [String] = [
+        "com.apple.",
+        "group.com.apple.",
+        "com.yomo.",
+        "org.swift.",
+        "com.google.keystone",
+        "com.microsoft.autoupdate",
+        "com.adobe.acc",
+        "com.adobe.armdc",
+        "com.oracle.java"
     ]
 
     private static let forbiddenAbsoluteFragments: [String] = [
@@ -1105,7 +1304,18 @@ private enum SpaceCleanerEngine {
             itemsByCategory[rule.category, default: []].append(item)
         }
 
-        // 2. Dynamic discovery of remaining user app caches under ~/Library/Caches (skipping Apple/protected/already claimed)
+        // 2. Conservative Uninstalled App Leftovers scan (runs BEFORE dynamic ~/Library/Caches so orphans aren't double-counted)
+        onProgress("正在比对本机应用并检测已卸载软件残留…")
+        let leftoverItems = scanUninstalledAppLeftovers(
+            home: home,
+            runningApps: runningApps,
+            claimedPaths: &claimedNormalizedPaths
+        )
+        if !leftoverItems.isEmpty {
+            itemsByCategory[.appLeftovers, default: []].append(contentsOf: leftoverItems)
+        }
+
+        // 3. Dynamic discovery of remaining user app caches under ~/Library/Caches (skipping Apple/protected/already claimed)
         onProgress("正在扫描 ~/Library/Caches 应用缓存…")
         let userCachesDir = URL(fileURLWithPath: home).appendingPathComponent("Library/Caches").standardizedFileURL
         if let entries = try? fm.contentsOfDirectory(
@@ -1131,8 +1341,10 @@ private enum SpaceCleanerEngine {
                 let stats = measureDirectoryOrFile(atPath: path)
                 guard stats.bytes >= minDisplayBytes else { continue }
 
-                let runningName = runningApps[name.lowercased()]
                 let friendlyName = resolveFriendlyAppName(forCacheFolder: name)
+                let runningName = runningApps[name.lowercased()]
+                    ?? runningApps["name:\(friendlyName.lowercased())"]
+                    ?? runningApps["name:\(name.lowercased())"]
                 let item = CleanerItem(
                     id: "cache.user.\(name)",
                     category: .systemAndLogs,
@@ -1289,6 +1501,7 @@ private enum SpaceCleanerEngine {
 
     static func executeCleanup(
         items: [CleanerItem],
+        runningBundleIDs: Set<String> = [],
         onProgress: @escaping @Sendable (String) -> Void
     ) -> CleanupReport {
         let start = ProcessInfo.processInfo.systemUptime
@@ -1386,6 +1599,13 @@ private enum SpaceCleanerEngine {
                     for child in children {
                         let childPath = child.standardizedFileURL.path
                         if excludeSubpaths.contains(childPath) { continue }
+                        if item.id == "sys.savedAppState" {
+                            let nameLower = child.lastPathComponent.lowercased()
+                            if nameLower.hasSuffix(".savedstate") {
+                                let bid = String(nameLower.dropLast(".savedstate".count))
+                                if runningBundleIDs.contains(bid) { continue }
+                            }
+                        }
                         guard isPathSafeToMutate(childPath, home: home) else { continue }
 
                         let childStats = measureDirectoryOrFile(atPath: childPath)
@@ -1572,5 +1792,371 @@ private enum SpaceCleanerEngine {
             }
         }
         return folderName
+    }
+
+    // MARK: - Conservative Uninstalled App Leftovers Scanner (Pearcleaner-style)
+
+    /// Scans strict reverse-DNS bundle directories under ~/Library/* and cross-checks them against:
+    /// 1) All installed .app bundles (including Helpers/LoginItems) and Plug-Ins/PreferencePanes
+    /// 2) All currently running apps
+    /// 3) macOS LaunchServices (`NSWorkspace.shared.urlForApplication(withBundleIdentifier:) == nil`)
+    /// Every detected leftover is marked `.review` (unchecked by default) and removed via `.moveToTrash`.
+    private static func scanUninstalledAppLeftovers(
+        home: String,
+        runningApps: [String: String],
+        claimedPaths: inout Set<String>
+    ) -> [CleanerItem] {
+        let fm = FileManager.default
+        let installedBundleIDs = collectInstalledBundleIDs(home: home, runningApps: runningApps)
+
+        let scanLocations: [(relDir: String, label: String, stripSuffix: String?)] = [
+            ("Library/Application Support", "Application Support", nil),
+            ("Library/Caches", "Caches", nil),
+            ("Library/Containers", "容器", nil),
+            ("Library/HTTPStorages", "HTTP 缓存", nil),
+            ("Library/WebKit", "WebKit", nil),
+            ("Library/Saved Application State", "窗口快照", ".savedState")
+        ]
+
+        // Group candidate paths by normalized uninstalled bundleID
+        var pathsByBundleID: [String: [(path: String, label: String, bytes: UInt64, files: Int)]] = [:]
+
+        for loc in scanLocations {
+            let dirURL = URL(fileURLWithPath: home).appendingPathComponent(loc.relDir).standardizedFileURL
+            guard let entries = try? fm.contentsOfDirectory(
+                at: dirURL,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+
+            for entryURL in entries {
+                let path = entryURL.standardizedFileURL.path
+                guard !claimedPaths.contains(path), isPathAllowedForRule(path, home: home) else { continue }
+                let rv = try? entryURL.resourceValues(forKeys: [.isSymbolicLinkKey])
+                if rv?.isSymbolicLink == true { continue }
+
+                var rawName = entryURL.lastPathComponent
+                if let suffix = loc.stripSuffix {
+                    guard rawName.hasSuffix(suffix) else { continue }
+                    rawName = String(rawName.dropLast(suffix.count))
+                }
+
+                let bidLower = rawName.lowercased()
+                guard isStrictReverseDNSBundleID(bidLower),
+                      !isProtectedLeftoverBundleID(bidLower),
+                      !isBundleIDInstalledOrRelated(bidLower, installed: installedBundleIDs) else {
+                    continue
+                }
+
+                // Final LaunchServices verification: if macOS knows ANY app anywhere on disk with this ID, keep it!
+                if NSWorkspace.shared.urlForApplication(withBundleIdentifier: rawName) != nil {
+                    continue
+                }
+
+                let stats = measureDirectoryOrFile(atPath: path)
+                guard stats.bytes > 0 else { continue }
+
+                pathsByBundleID[bidLower, default: []].append((path, loc.label, stats.bytes, stats.files))
+            }
+        }
+
+        // Also pair matching ~/Library/Preferences/<bid>.plist ONLY for bundle IDs already confirmed as leftovers
+        let prefsDir = URL(fileURLWithPath: home).appendingPathComponent("Library/Preferences").standardizedFileURL
+        for bidLower in Array(pathsByBundleID.keys) {
+            if let entries = try? fm.contentsOfDirectory(at: prefsDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                for entryURL in entries where entryURL.pathExtension.lowercased() == "plist" {
+                    let stem = entryURL.deletingPathExtension().lastPathComponent.lowercased()
+                    if stem == bidLower {
+                        let p = entryURL.standardizedFileURL.path
+                        if isPathAllowedForRule(p, home: home) {
+                            let stats = measureDirectoryOrFile(atPath: p)
+                            pathsByBundleID[bidLower, default: []].append((p, "Preferences", stats.bytes, max(1, stats.files)))
+                        }
+                    }
+                }
+            }
+        }
+
+        var items: [CleanerItem] = []
+        for (bidLower, entries) in pathsByBundleID {
+            let totalBytes = entries.reduce(UInt64(0)) { $0 &+ $1.bytes }
+            let totalFiles = entries.reduce(0) { $0 + $1.files }
+            // Keep threshold at 128 KB for app leftovers so real orphan folders/containers show up cleanly
+            guard totalBytes >= 128 * 1024 else { continue }
+
+            let allPaths = entries.map(\.path)
+            for p in allPaths {
+                claimedPaths.insert(p)
+            }
+
+            let labels = Array(NSOrderedSet(array: entries.map(\.label))) as? [String] ?? []
+            let friendly = resolveFriendlyAppName(forCacheFolder: bidLower)
+            let detail = "本机未找到「\(bidLower)」对应程序（含 \(labels.joined(separator: "、")) 共 \(allPaths.count) 处），勾选后将安全移至废纸篓"
+
+            items.append(
+                CleanerItem(
+                    id: "leftover.\(bidLower)",
+                    category: .appLeftovers,
+                    title: "\(friendly) 残留 (\(bidLower))",
+                    detail: detail,
+                    paths: allPaths,
+                    byteSize: totalBytes,
+                    fileCount: totalFiles,
+                    safety: .review,
+                    deletionAction: .moveToTrash,
+                    runningAppName: nil,
+                    modifiedAt: nil,
+                    isSelected: false
+                )
+            )
+        }
+
+        return items.sorted { $0.byteSize > $1.byteSize }
+    }
+
+    private static func collectInstalledBundleIDs(home: String, runningApps: [String: String]) -> Set<String> {
+        let fm = FileManager.default
+        var ids = Set<String>()
+
+        for key in runningApps.keys where !key.hasPrefix("name:") {
+            ids.insert(key.lowercased())
+        }
+
+        let appRoots: [(path: String, maxDepth: Int)] = [
+            ("/Applications", 2),
+            ("/System/Applications", 2),
+            ("/System/Library/CoreServices", 1),
+            (URL(fileURLWithPath: home).appendingPathComponent("Applications").path, 2),
+            ("/Library/PreferencePanes", 1),
+            (URL(fileURLWithPath: home).appendingPathComponent("Library/PreferencePanes").path, 1),
+            ("/Library/Audio/Plug-Ins", 2),
+            (URL(fileURLWithPath: home).appendingPathComponent("Library/Audio/Plug-Ins").path, 2)
+        ]
+
+        func scanBundles(in dirURL: URL, depth: Int, maxDepth: Int) {
+            guard depth <= maxDepth,
+                  let entries = try? fm.contentsOfDirectory(
+                    at: dirURL,
+                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                    options: [.skipsHiddenFiles]
+                  ) else { return }
+
+            for url in entries {
+                let ext = url.pathExtension.lowercased()
+                if ext == "app" || ext == "prefpane" || ext == "component" || ext == "vst3" || ext == "driver" || ext == "appex" {
+                    if let bid = Bundle(url: url)?.bundleIdentifier?.lowercased(), !bid.isEmpty {
+                        ids.insert(bid)
+                    }
+                    // Also register embedded LoginItems & Helpers so helper caches aren't falsely flagged
+                    for sub in ["Contents/Library/LoginItems", "Contents/Helpers", "Contents/PlugIns"] {
+                        let subURL = url.appendingPathComponent(sub)
+                        if let subEntries = try? fm.contentsOfDirectory(at: subURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                            for subItem in subEntries {
+                                if let subBid = Bundle(url: subItem)?.bundleIdentifier?.lowercased(), !subBid.isEmpty {
+                                    ids.insert(subBid)
+                                }
+                            }
+                        }
+                    }
+                } else if depth < maxDepth {
+                    let rv = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                    if rv?.isDirectory == true && rv?.isSymbolicLink != true {
+                        scanBundles(in: url, depth: depth + 1, maxDepth: maxDepth)
+                    }
+                }
+            }
+        }
+
+        for root in appRoots {
+            scanBundles(in: URL(fileURLWithPath: root.path), depth: 1, maxDepth: root.maxDepth)
+        }
+        return ids
+    }
+
+    private static func isStrictReverseDNSBundleID(_ lower: String) -> Bool {
+        let parts = lower.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count >= 3 else { return false }
+        let knownTLDs: Set<String> = ["com", "org", "net", "io", "cn", "app", "dev", "co", "me", "de", "jp", "uk", "edu", "ai", "ch", "fr", "nl", "ru", "im", "tv", "cc", "xyz", "pro", "so", "us", "ca", "hk", "tw"]
+        guard let first = parts.first, knownTLDs.contains(String(first)) else { return false }
+        return parts.allSatisfy { !$0.isEmpty && $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" } }
+    }
+
+    private static func isProtectedLeftoverBundleID(_ lower: String) -> Bool {
+        for prefix in protectedLeftoverPrefixes {
+            if lower.hasPrefix(prefix) { return true }
+        }
+        return false
+    }
+
+    private static func isBundleIDInstalledOrRelated(_ candidate: String, installed: Set<String>) -> Bool {
+        if installed.contains(candidate) { return true }
+        // Check helper/extension prefix relationship in both directions (e.g. com.foo.bar.ShipIt <-> com.foo.bar)
+        for bid in installed {
+            if candidate.hasPrefix(bid + ".") || bid.hasPrefix(candidate + ".") {
+                return true
+            }
+        }
+        return false
+    }
+
+    // MARK: - Native Zero-Subprocess Startup / Login Items Scanner
+
+    static func scanStartupItems(
+        runningSnap: (bundleIDs: Set<String>, executablePaths: Set<String>, executableNames: Set<String>)
+    ) -> [StartupItemInfo] {
+        let fm = FileManager.default
+        let home = NSHomeDirectory()
+        var results: [StartupItemInfo] = []
+
+        let plistDirs: [(path: String, scope: StartupItemScope, canTrash: Bool)] = [
+            (URL(fileURLWithPath: home).appendingPathComponent("Library/LaunchAgents").standardizedFileURL.path, .userLaunchAgent, true),
+            ("/Library/LaunchAgents", .globalLaunchAgent, false),
+            ("/Library/LaunchDaemons", .globalLaunchDaemon, false)
+        ]
+
+        for dirSpec in plistDirs {
+            let dirURL = URL(fileURLWithPath: dirSpec.path)
+            guard let files = try? fm.contentsOfDirectory(
+                at: dirURL,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+
+            for fileURL in files where fileURL.pathExtension.lowercased() == "plist" {
+                guard let data = try? Data(contentsOf: fileURL),
+                      let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] else {
+                    continue
+                }
+
+                let label = (plist["Label"] as? String) ?? fileURL.deletingPathExtension().lastPathComponent
+                let progArgs = plist["ProgramArguments"] as? [String]
+                let rawProgram = (plist["Program"] as? String) ?? progArgs?.first
+                let expandedExec: String? = rawProgram.map { p in
+                    if p.hasPrefix("~/") {
+                        return home + String(p.dropFirst(1))
+                    }
+                    return p
+                }
+
+                let runAtLoad = (plist["RunAtLoad"] as? Bool) ?? false
+                let keepAlive: Bool = {
+                    if let b = plist["KeepAlive"] as? Bool { return b }
+                    if let d = plist["KeepAlive"] as? [String: Any], !d.isEmpty { return true }
+                    return false
+                }()
+                let disabledInPlist = (plist["Disabled"] as? Bool) ?? false
+
+                let isOrphaned: Bool = {
+                    guard let exec = expandedExec, !exec.isEmpty else { return false }
+                    // Only flag absolute binary paths as orphaned if missing on disk
+                    guard exec.hasPrefix("/") else { return false }
+                    return !fm.fileExists(atPath: exec)
+                }()
+
+                let assocBundles = (plist["AssociatedBundleIdentifiers"] as? [String])
+                    ?? ((plist["AssociatedBundleIdentifiers"] as? String).map { [$0] } ?? [])
+
+                let isRunning: Bool = {
+                    if runningSnap.bundleIDs.contains(label.lowercased()) { return true }
+                    for b in assocBundles where runningSnap.bundleIDs.contains(b.lowercased()) {
+                        return true
+                    }
+                    if let exec = expandedExec {
+                        let lowerExec = URL(fileURLWithPath: exec).standardizedFileURL.path.lowercased()
+                        if runningSnap.executablePaths.contains(lowerExec) { return true }
+                        let baseName = URL(fileURLWithPath: exec).lastPathComponent.lowercased()
+                        if runningSnap.executableNames.contains(baseName) { return true }
+                    }
+                    return false
+                }()
+
+                let displayName = friendlyStartupName(label: label, executablePath: expandedExec, associatedBundles: assocBundles)
+
+                results.append(
+                    StartupItemInfo(
+                        id: "\(dirSpec.scope.rawValue)::\(fileURL.path)",
+                        label: label,
+                        displayName: displayName,
+                        scope: dirSpec.scope,
+                        sourcePath: fileURL.standardizedFileURL.path,
+                        executablePath: expandedExec,
+                        runAtLoad: runAtLoad,
+                        keepAlive: keepAlive,
+                        isDisabledInPlist: disabledInPlist,
+                        isRunning: isRunning,
+                        isOrphanedBinary: isOrphaned,
+                        canMoveToTrash: dirSpec.canTrash
+                    )
+                )
+            }
+        }
+
+        // Also inspect embedded modern LoginItems inside /Applications and ~/Applications (read-only awareness)
+        let appDirs = ["/Applications", URL(fileURLWithPath: home).appendingPathComponent("Applications").path]
+        for appDir in appDirs {
+            guard let apps = try? fm.contentsOfDirectory(
+                at: URL(fileURLWithPath: appDir),
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+
+            for appURL in apps where appURL.pathExtension.lowercased() == "app" {
+                let loginItemsDir = appURL.appendingPathComponent("Contents/Library/LoginItems")
+                guard let helpers = try? fm.contentsOfDirectory(at: loginItemsDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+                    continue
+                }
+                let parentName = appURL.deletingPathExtension().lastPathComponent
+                for helperURL in helpers where helperURL.pathExtension.lowercased() == "app" {
+                    let helperBundle = Bundle(url: helperURL)
+                    let bid = helperBundle?.bundleIdentifier ?? helperURL.deletingPathExtension().lastPathComponent
+                    let isRunning = runningSnap.bundleIDs.contains(bid.lowercased())
+                    results.append(
+                        StartupItemInfo(
+                            id: "loginItem::\(helperURL.path)",
+                            label: bid,
+                            displayName: "\(parentName)（内嵌登录助手）",
+                            scope: .appLoginItem,
+                            sourcePath: helperURL.standardizedFileURL.path,
+                            executablePath: helperBundle?.executablePath,
+                            runAtLoad: true,
+                            keepAlive: false,
+                            isDisabledInPlist: false,
+                            isRunning: isRunning,
+                            isOrphanedBinary: false,
+                            canMoveToTrash: false
+                        )
+                    )
+                }
+            }
+        }
+
+        // Sort: orphaned zombies first (actionable!), then user agents, then running, then alphabetical
+        return results.sorted { a, b in
+            if a.isOrphanedBinary != b.isOrphanedBinary { return a.isOrphanedBinary }
+            if a.canMoveToTrash != b.canMoveToTrash { return a.canMoveToTrash }
+            if a.isRunning != b.isRunning { return a.isRunning }
+            return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
+        }
+    }
+
+    private static func friendlyStartupName(label: String, executablePath: String?, associatedBundles: [String]) -> String {
+        for bid in associatedBundles {
+            if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid) {
+                return appURL.deletingPathExtension().lastPathComponent
+            }
+        }
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: label) {
+            return appURL.deletingPathExtension().lastPathComponent
+        }
+        if let exec = executablePath {
+            // If executable lives inside Foo.app/Contents/..., extract "Foo"
+            let comps = URL(fileURLWithPath: exec).pathComponents
+            if let appComp = comps.first(where: { $0.hasSuffix(".app") }) {
+                return String(appComp.dropLast(4))
+            }
+            let base = URL(fileURLWithPath: exec).lastPathComponent
+            if !base.isEmpty { return base }
+        }
+        return resolveFriendlyAppName(forCacheFolder: label)
     }
 }

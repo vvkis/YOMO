@@ -209,11 +209,16 @@ public struct SpaceCleanerPopoverView: View {
 
             // 3. Footer
             HStack {
-                Text("仅操作用户目录 · 跳过核心系统文件")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                Button("开机启动项…") {
+                    store.consoleTab = .startup
+                    onOpenConsole()
+                }
+                .font(.system(size: 11, weight: .medium))
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
                 Spacer()
                 Button("控制台详查…") {
+                    store.consoleTab = .cleanup
                     onOpenConsole()
                 }
                 .font(.system(size: 11.5, weight: .medium))
@@ -531,9 +536,35 @@ public struct SpaceCleanerConsoleView: View {
         let isDark = (colorScheme == .dark)
 
         ConsolePageContainer(
-            title: "空间清理",
-            subtitle: "学习业界安全清理规则：纯原生 API 零子进程扫描，按安全等级分级，每一项均可展开查看路径、勾选控制，并给出完整清理明细。"
+            title: "空间清理与启动项",
+            subtitle: "纯原生 API 零子进程扫描：按安全等级分级清理缓存与已卸载软件残留，同时透明检测本机开机启动项与僵尸后台代理。"
         ) {
+            // 0. Top Tab Switcher (Space Cleanup | Startup Items)
+            HStack(spacing: 10) {
+                Picker("", selection: $store.consoleTab) {
+                    ForEach(SpaceCleanerConsoleTab.allCases) { tab in
+                        Text(tab.rawValue).tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 240)
+
+                Spacer()
+
+                if store.consoleTab == .startup && store.orphanedStartupCount > 0 {
+                    Text("发现 \(store.orphanedStartupCount) 个已失效僵尸启动项")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.orange.opacity(0.14)))
+                }
+            }
+
+            if store.consoleTab == .startup {
+                startupItemsContent(isDark: isDark)
+            } else {
             // 1. Module Enable Toggle
             ConsoleCard {
                 ConsoleRow(
@@ -813,16 +844,161 @@ public struct SpaceCleanerConsoleView: View {
                 ConsoleRowDivider()
 
                 ConsoleRow(
-                    title: "分级保护与运行中应用避让",
-                    subtitle: "「极安全 / 推荐清理」默认勾选；正在运行的浏览器/IDE 缓存自动取消默认勾选；安装包与大文件默认不选且清理时安全移至废纸篓，随时可还原"
+                    title: "分级保护、运行中避让与软件残留检测",
+                    subtitle: "「极安全 / 推荐清理」默认勾选；运行中的浏览器/IDE 缓存自动取消默认勾选；已卸载软件残留经已装 App 与 LaunchServices 双重核验，与安装包/大文件一样默认不选且清理时移至废纸篓，随时可还原"
                 ) { EmptyView() }
+            }
             }
         }
         .onAppear {
             store.refreshVolumeSummary()
-            if !store.hasScanned && !store.isScanning && !store.isCleaning {
+            if store.consoleTab == .startup {
+                if !store.hasScannedStartupItems && !store.isScanningStartupItems {
+                    store.refreshStartupItems()
+                }
+            } else if !store.hasScanned && !store.isScanning && !store.isCleaning {
                 store.startScan()
             }
+        }
+        .onChange(of: store.consoleTab) { _, newTab in
+            if newTab == .startup && !store.hasScannedStartupItems && !store.isScanningStartupItems {
+                store.refreshStartupItems()
+            } else if newTab == .cleanup && !store.hasScanned && !store.isScanning && !store.isCleaning {
+                store.startScan()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func startupItemsContent(isDark: Bool) -> some View {
+        // 1. Startup Summary Card
+        ConsoleCard("开机启动项与后台代理总览") {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.indigo.opacity(isDark ? 0.22 : 0.12))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "bolt.shield.fill")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(.indigo)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(store.isScanningStartupItems
+                         ? "正在检测开机启动项与后台服务…"
+                         : "共检测到 \(store.startupItems.count) 个开机启动与后台项")
+                        .font(.system(size: 15.5, weight: .bold))
+                        .monospacedDigit()
+                    Text("运行中 \(store.runningStartupCount) 项 · 已失效僵尸残留 \(store.orphanedStartupCount) 项 · 覆盖用户/系统 LaunchAgents、LaunchDaemons 与应用内嵌登录项")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
+                Spacer(minLength: 8)
+
+                HStack(spacing: 8) {
+                    ConsoleActionButton(store.isScanningStartupItems ? "扫描中…" : "重新检测", variant: .standard) {
+                        store.refreshStartupItems()
+                    }
+                    .disabled(store.isScanningStartupItems)
+
+                    ConsoleActionButton("系统登录项设置…", variant: .prominent) {
+                        store.openLoginItemsSettings()
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+        }
+
+        if let msg = store.startupStatusMessage, !msg.isEmpty {
+            ConsoleBanner(
+                icon: "checkmark.circle.fill",
+                tint: ConsoleTheme.accent,
+                title: msg,
+                subtitle: "可在访达废纸篓中右键「放回原处」随时恢复。"
+            )
+        }
+
+        // 2. Filter Bar
+        HStack(spacing: 8) {
+            Picker("", selection: $store.startupFilter) {
+                ForEach(StartupItemFilter.allCases) { f in
+                    Text(f.rawValue).tag(f)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 420)
+
+            Spacer()
+
+            Text("显示 \(store.filteredStartupItems.count) 项")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 2)
+
+        // 3. Startup Items List
+        let items = store.filteredStartupItems
+        if store.isScanningStartupItems && items.isEmpty {
+            ConsoleCard {
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("正在解析 LaunchAgents、LaunchDaemons 与应用内嵌登录助手…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else if items.isEmpty {
+            ConsoleCard {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(ConsoleTheme.accent)
+                    Text(store.startupFilter == .orphaned
+                         ? "未检测到目标程序已丢失的僵尸启动项"
+                         : "当前筛选条件下暂无启动项")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            ConsoleCard("检测结果") {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        if index > 0 {
+                            ConsoleRowDivider()
+                        }
+                        ConsoleStartupItemRow(
+                            item: item,
+                            onReveal: { store.revealInFinder(item.sourcePath) },
+                            onTrash: item.canMoveToTrash ? { store.trashUserStartupItem(item) } : nil
+                        )
+                    }
+                }
+            }
+        }
+
+        // 4. Guidance Card
+        ConsoleCard("开机项管理说明") {
+            ConsoleRow(
+                title: "用户级启动项（~/Library/LaunchAgents）可直接移至废纸篓",
+                subtitle: "特别是标红的「程序已卸载 · 僵尸残留」项，移至废纸篓后下次登录即彻底停止拉起；若需恢复只需在废纸篓放回原处"
+            ) { EmptyView() }
+
+            ConsoleRowDivider()
+
+            ConsoleRow(
+                title: "系统级代理（/Library）与应用内嵌登录项（macOS BTM）",
+                subtitle: "受 macOS 权限保护不直接改写系统目录，点击「系统登录项设置…」可在官方「通用 → 登录项与扩展」中安全开关，或点击文件夹图标定位 .plist"
+            ) { EmptyView() }
         }
     }
 
@@ -1098,5 +1274,102 @@ private struct CleanerCheckGlyph: View {
         }
         .frame(width: size + 4, height: size + 4)
         .contentShape(Rectangle())
+    }
+}
+
+private struct ConsoleStartupItemRow: View {
+    let item: StartupItemInfo
+    let onReveal: () -> Void
+    let onTrash: (() -> Void)?
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 11) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill((item.isOrphanedBinary ? Color.red : item.scope.tintColor).opacity(0.14))
+                    .frame(width: 30, height: 30)
+                Image(systemName: item.isOrphanedBinary ? "exclamationmark.triangle.fill" : "bolt.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(item.isOrphanedBinary ? Color.red : item.scope.tintColor)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(item.displayName)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    pill(item.scope.badgeTitle, color: item.scope.tintColor)
+
+                    if item.isOrphanedBinary {
+                        pill("程序已卸载 · 僵尸残留", color: .red)
+                    } else if item.isRunning {
+                        pill("运行中", color: ConsoleTheme.accent)
+                    }
+
+                    if item.runAtLoad && !item.isOrphanedBinary {
+                        pill("开机自启", color: .secondary)
+                    }
+                    if item.keepAlive && !item.isOrphanedBinary {
+                        pill("后台保活", color: .orange)
+                    }
+                    if item.isDisabledInPlist {
+                        pill("已禁用", color: .secondary)
+                    }
+                }
+
+                Text(item.label)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    Text(item.displaySourcePath)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if let exec = item.executablePath, !exec.isEmpty {
+                        Text("→")
+                        Text(exec)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 6) {
+                if let onTrash {
+                    ConsoleActionButton("移至废纸篓", variant: item.isOrphanedBinary ? .destructive : .standard, action: onTrash)
+                }
+
+                Button(action: onReveal) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 26, height: 26)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color.primary.opacity(0.05))
+                        )
+                }
+                .buttonStyle(.plain)
+                .help("在访达中查看配置文件：\(item.displaySourcePath)")
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func pill(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9.5, weight: .semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1.5)
+            .background(Capsule().fill(color.opacity(0.13)))
     }
 }
