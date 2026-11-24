@@ -241,7 +241,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             let activeAutosaveName = "\(Self.statusItemBaseAutosaveName)-\(epoch)"
             if forceRightPosition {
-                let targetOffset = 212.0
+                // Calibrated right past Clock + Control Center + Spotlight (~174pt) and ahead of all third-party apps
+                let targetOffset = 178.0
                 defaults.set(targetOffset, forKey: "NSStatusItem Preferred Position \(activeAutosaveName)")
                 defaults.set(targetOffset, forKey: "NSStatusItem Preferred Position Item-0")
                 CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication)
