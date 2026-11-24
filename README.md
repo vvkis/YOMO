@@ -16,7 +16,7 @@
 
 **简体中文** · [English](README_EN.md)
 
-[核心特性](#为什么选择-yomo) · [菜单栏样式](#菜单栏状态徽章) · [模块与示例](#七大核心模块与使用示例) · [快速开始](#快速开始) · [常见问题](#常见问题)
+[核心特性](#为什么选择-yomo) · [菜单栏样式](#菜单栏状态徽章) · [模块与示例](#八大核心模块与使用示例) · [快速开始](#快速开始) · [常见问题](#常见问题)
 
 <br />
 
@@ -71,7 +71,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ---
 
-## 七大核心模块与使用示例
+## 八大核心模块与使用示例
 
 所有扩展模块均可在「**控制台 → 模块总览**」中独立开关。不需要的模块关闭后不会参与面板渲染或刷新。
 
@@ -207,7 +207,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
     <td width="62%" valign="top">
       <p><b>核心能力</b></p>
       <ul>
-        <li><b>全局快捷键秒呼</b>：内置零权限原生 Carbon 热键 <code>⇧⌘V</code>（Shift+Cmd+V），在任意应用内一键唤出历史剪贴板并快速回贴。</li>
+        <li><b>全局快捷键秒呼 &amp; 空格快速预览</b>：内置零权限原生 Carbon 热键 <code>⇧⌘V</code>（Shift+Cmd+V）一步直达历史剪贴板；悬停任意图片或长文本条目按住 <b>空格键（Space）</b> 即可弹出高清原图 / 全文快速预览浮窗。</li>
         <li><b>文本与图片双记录</b>：自动记录复制的文本与截图（图片在后台线程异步编码，不卡主线程），带来源应用图标与相对时间。</li>
         <li><b>本地 Vision OCR &amp; 二维码扫描</b>：图片条目支持按需调用 Apple 原生 <code>Vision</code> 引擎一键提取图片文字（OCR）及识别二维码 / 条形码，完全离线运行。</li>
         <li><b>隐私安全过滤</b>：自动识别并跳过 1Password / Bitwarden / 系统密码等密码管理器及敏感标记（<code>ConcealedType</code> / <code>TransientType</code>），绝不记录密码。</li>
@@ -247,6 +247,30 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ---
 
+### 8. 空间清理与开机启动项（SpaceCleaner）
+
+<table>
+  <tr>
+    <td width="46%" align="center">
+      <img src="docs/screenshots/console-space-cleaner.png" alt="空间清理与开机启动项界面" width="340" />
+    </td>
+    <td width="54%" valign="top">
+      <p><b>核心能力</b></p>
+      <ul>
+        <li><b>零子进程分级安全清理</b>：纯原生 API 扫描系统与应用缓存、开发构建产物及已卸载软件残留，自动跳过 Apple 核心服务与正在运行的应用，每项可展开查看真实路径、逐项勾选并生成清理报告。</li>
+        <li><b>开机启动项分组管理</b>：按应用分组展示 <code>launchd</code> 后台自启项的真实运行状态与应用图标，支持用户级 <code>LaunchAgents</code> 可逆一键启停、系统级守护进程按需管理员授权，并可直达系统「登录项与扩展」设置。</li>
+        <li><b>按需扫描零常驻</b>：不打开清理页面时 0 后台扫描开销。</li>
+      </ul>
+      <p><b>使用示例</b></p>
+      <blockquote>
+        磁盘告急或开机后台自启软件太多？打开 YOMO 控制台 → 进入「空间清理」点「智能推荐」一键释放安全缓存与卸载残留，再切到「开机启动项」按应用把不需要的后台守护进程关掉。
+      </blockquote>
+    </td>
+  </tr>
+</table>
+
+---
+
 ### 外观与个性化设置
 
 <table>
@@ -272,7 +296,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ### 方式一：直接下载 Release 安装包（推荐）
 
-1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.4.2.dmg`**（同时提供 **`YOMO-v1.4.2-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
+1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.5.0.dmg`**（同时提供 **`YOMO-v1.5.0-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
 2. 双击打开 `.dmg`，将 **`YOMO.app`** 拖入 **`Applications`（应用程序）** 文件夹。
 3. 打开 **YOMO**，在浮窗底部点击 **「外观与样式」→ 开启「开机自动启动」**，即可随系统静默常驻。
 
@@ -307,7 +331,7 @@ open dist/YOMO.app
 
 # 3.（可选）一键生成 DMG 安装包 + 干净源码 ZIP + SHA256 校验文件
 ./scripts/build-release.sh
-# 产物输出至 dist/YOMO-v1.4.2.dmg、dist/YOMO-v1.4.2-source.zip、dist/SHA256SUMS.txt
+# 产物输出至 dist/YOMO-v1.5.0.dmg、dist/YOMO-v1.5.0-source.zip、dist/SHA256SUMS.txt
 ```
 
 ### 首次运行权限说明

@@ -207,7 +207,7 @@ Every extension module can be enabled or disabled independently in **Hub Console
     <td width="62%" valign="top">
       <p><b>Highlights</b></p>
       <ul>
-        <li><b>Instant Global Hotkey (<code>⇧⌘V</code>)</b>: Zero-permission native Carbon global shortcut lets you summon Clipboard History from any app.</li>
+        <li><b>Instant Global Hotkey (<code>⇧⌘V</code>) &amp; Spacebar Quick Preview</b>: Zero-permission native Carbon global shortcut jumps straight into Clipboard History from any app; hover over any image or long text entry and hold <b>Spacebar</b> for an instant floating full-size / full-text preview.</li>
         <li><b>Text &amp; Image History</b>: Automatically records copied text and screenshots (with off-main-thread PNG encoding), displaying source app icons and relative timestamps.</li>
         <li><b>On-Demand Vision OCR &amp; QR/Barcode Scanning</b>: Extract text (OCR) and scan QR/barcodes directly from any copied image using Apple's native offline <code>Vision</code> framework.</li>
         <li><b>Privacy-Aware Filtering</b>: Automatically skips sensitive pasteboard types (<code>ConcealedType</code> / <code>TransientType</code>) and password managers (Apple Passwords, 1Password, Bitwarden, KeePassXC, etc.).</li>
@@ -247,6 +247,30 @@ Every extension module can be enabled or disabled independently in **Hub Console
 
 ---
 
+### 8. Space Cleaner &amp; Startup Items
+
+<table>
+  <tr>
+    <td width="46%" align="center">
+      <img src="docs/screenshots/console-space-cleaner.png" alt="Space Cleaner Console" width="340" />
+    </td>
+    <td width="54%" valign="top">
+      <p><b>Highlights</b></p>
+      <ul>
+        <li><b>Zero-Subprocess Tiered Space Cleaner</b>: Native API scanning for system/app caches, developer build artifacts, and uninstalled app leftovers—automatically guarding Apple core services and currently running apps, with expandable paths, per-item checkboxes, and a cleanup report.</li>
+        <li><b>Grouped Startup Items Manager</b>: Groups <code>launchd</code> background items by app with real running status and app icons, reversible one-click toggles for user <code>LaunchAgents</code>, on-demand admin auth for system daemons, and direct links to macOS Login Items &amp; Extensions settings.</li>
+        <li><b>On-Demand Scanning</b>: Zero background scanning when the cleaner page is closed.</li>
+      </ul>
+      <p><b>Example</b></p>
+      <blockquote>
+        Running low on SSD space or tired of mystery background updaters? Open YOMO Console → Space Cleaner → click Smart Select to safely reclaim cache &amp; leftover gigabytes, then switch to Startup Items to toggle unwanted background agents off by app.
+      </blockquote>
+    </td>
+  </tr>
+</table>
+
+---
+
 ### Appearance & Customization
 
 <table>
@@ -272,7 +296,7 @@ Every extension module can be enabled or disabled independently in **Hub Console
 
 ### Option 1: Download Release DMG (Recommended)
 
-1. Download **`YOMO-v1.4.2.dmg`** from the [Releases page](https://github.com/vvkis/YOMO/releases) (clean **`YOMO-v1.4.2-source.zip`** and `SHA256SUMS.txt` are also provided).
+1. Download **`YOMO-v1.5.0.dmg`** from the [Releases page](https://github.com/vvkis/YOMO/releases) (clean **`YOMO-v1.5.0-source.zip`** and `SHA256SUMS.txt` are also provided).
 2. Open the `.dmg` and drag **`YOMO.app`** into **`Applications`**.
 3. Launch **YOMO**, open **Appearance & Style**, and enable **Launch at Login**.
 
@@ -307,7 +331,7 @@ open dist/YOMO.app
 
 # 3. (Optional) Build Release DMG + clean source ZIP + SHA256 checksums
 ./scripts/build-release.sh
-# Outputs: dist/YOMO-v1.4.2.dmg, dist/YOMO-v1.4.2-source.zip, dist/SHA256SUMS.txt
+# Outputs: dist/YOMO-v1.5.0.dmg, dist/YOMO-v1.5.0-source.zip, dist/SHA256SUMS.txt
 ```
 
 ### Permissions
