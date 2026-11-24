@@ -284,7 +284,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
         <li><b>三种玻璃外观</b>：支持 <code>深色烟熏</code>、<code>浅色亮玻璃</code> 与 <code>跟随系统</code> 实时切换。</li>
         <li><b>菜单栏图标定制</b>：4 种徽章样式 + 语义配色 / 纯单色模板自由组合。</li>
         <li><b>采样频率调节</b>：支持 <code>1 秒 / 2 秒 / 3 秒</code> 刷新节奏。</li>
-        <li><b>开机自动启动</b>：原生注册登录项，随系统静默启动。</li>
+        <li><b>开机自动启动 &amp; 原生应用内更新</b>：原生注册登录项，并内置基于 GitHub Releases 的零限流检查更新与一键原地升级（带 SHA-256 校验）。</li>
       </ul>
     </td>
   </tr>
@@ -296,7 +296,7 @@ YOMO 将电量、Wi-Fi 信号、CPU/内存占用与实时网速压缩进单个�
 
 ### 方式一：直接下载 Release 安装包（推荐）
 
-1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.5.1.dmg`**（同时提供 **`YOMO-v1.5.1-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
+1. 前往 [Releases 页面](https://github.com/vvkis/YOMO/releases) 下载最新版本的 **`YOMO-v1.6.0.dmg`**（同时提供 **`YOMO-v1.6.0-source.zip`** 源码归档与 `SHA256SUMS.txt` 校验文件）。
 2. 双击打开 `.dmg`，将 **`YOMO.app`** 拖入 **`Applications`（应用程序）** 文件夹。
 3. 打开 **YOMO**，在浮窗底部点击 **「外观与样式」→ 开启「开机自动启动」**，即可随系统静默常驻。
 
@@ -331,7 +331,7 @@ open dist/YOMO.app
 
 # 3.（可选）一键生成 DMG 安装包 + 干净源码 ZIP + SHA256 校验文件
 ./scripts/build-release.sh
-# 产物输出至 dist/YOMO-v1.5.1.dmg、dist/YOMO-v1.5.1-source.zip、dist/SHA256SUMS.txt
+# 产物输出至 dist/YOMO-v1.6.0.dmg、dist/YOMO-v1.6.0-source.zip、dist/SHA256SUMS.txt
 ```
 
 ### 首次运行权限说明
