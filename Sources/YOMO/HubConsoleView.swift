@@ -164,6 +164,7 @@ struct HubConsoleView: View {
                     }
                 }
             )
+            .zIndex(10)
 
             // Right Detail Canvas
             Group {
@@ -406,51 +407,68 @@ private struct SidebarSplitHandle: View {
     @StateObject private var drag = SidebarSplitDragState()
 
     var body: some View {
-        ZStack {
-            Color.clear
-            Capsule()
-                .fill(
-                    drag.isDragging
-                        ? ConsoleTheme.accent.opacity(0.75)
-                        : (drag.isHovering ? Color.primary.opacity(0.24) : Color.clear)
-                )
-                .frame(width: 3, height: drag.isDragging ? 48 : 34)
-                .animation(.easeOut(duration: 0.14), value: drag.isHovering)
-                .animation(.easeOut(duration: 0.14), value: drag.isDragging)
-        }
-        .frame(width: 10)
-        .frame(maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            drag.isHovering = hovering
-            drag.updateCursor()
-        }
-        .onDisappear {
-            drag.cleanupCursor()
-        }
-        .gesture(
-            DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                .onChanged { value in
-                    if drag.dragStartWidth == nil {
-                        drag.dragStartWidth = currentWidth()
-                        drag.isDragging = true
-                        drag.updateCursor()
+        // Keep compact 10pt visual gap between sidebar card and detail canvas while expanding
+        // the interactive hover/drag hit area to a generous 22pt straddling the border.
+        Color.clear
+            .frame(width: 10)
+            .frame(maxHeight: .infinity)
+            .overlay {
+                ZStack {
+                    Color.clear
+                    if drag.isHovering || drag.isDragging {
+                        Rectangle()
+                            .fill(
+                                drag.isDragging
+                                    ? ConsoleTheme.accent.opacity(0.28)
+                                    : Color.primary.opacity(0.10)
+                            )
+                            .frame(width: 1)
+                            .padding(.vertical, 16)
                     }
-                    let start = drag.dragStartWidth ?? currentWidth()
-                    onDragWidth(start + value.translation.width)
+                    Capsule()
+                        .fill(
+                            drag.isDragging
+                                ? ConsoleTheme.accent.opacity(0.82)
+                                : (drag.isHovering ? Color.primary.opacity(0.32) : Color.clear)
+                        )
+                        .frame(width: 4, height: drag.isDragging ? 64 : 48)
+                        .animation(.easeOut(duration: 0.14), value: drag.isHovering)
+                        .animation(.easeOut(duration: 0.14), value: drag.isDragging)
                 }
-                .onEnded { value in
-                    let start = drag.dragStartWidth ?? currentWidth()
-                    drag.dragStartWidth = nil
-                    drag.isDragging = false
+                .frame(width: 22)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onHover { hovering in
+                    drag.isHovering = hovering
                     drag.updateCursor()
-                    onEndWidth(start + value.translation.width)
                 }
-        )
-        .onTapGesture(count: 2) {
-            onReset()
-        }
-        .help("左右拖动调节侧边栏宽度（双击恢复默认）")
+                .onDisappear {
+                    drag.cleanupCursor()
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { value in
+                            if drag.dragStartWidth == nil {
+                                drag.dragStartWidth = currentWidth()
+                                drag.isDragging = true
+                                drag.updateCursor()
+                            }
+                            let start = drag.dragStartWidth ?? currentWidth()
+                            onDragWidth(start + value.translation.width)
+                        }
+                        .onEnded { value in
+                            let start = drag.dragStartWidth ?? currentWidth()
+                            drag.dragStartWidth = nil
+                            drag.isDragging = false
+                            drag.updateCursor()
+                            onEndWidth(start + value.translation.width)
+                        }
+                )
+                .onTapGesture(count: 2) {
+                    onReset()
+                }
+                .help("左右拖动调节侧边栏宽度（双击恢复默认）")
+            }
     }
 }
 
