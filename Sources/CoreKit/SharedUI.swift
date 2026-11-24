@@ -88,7 +88,7 @@ public enum OverviewTileID: String, CaseIterable, Identifiable, Codable, Sendabl
         case .scrollReverser: return "滚轮翻转"
         case .keyboardLock: return "键盘锁"
         case .clipboard: return "历史剪贴板"
-        case .spaceCleaner: return "空间清理"
+        case .spaceCleaner: return "清理与启动"
         case .volume: return "声音输出"
         case .telemetry: return "系统占用"
         }

@@ -7,12 +7,12 @@ import CoreKit
 public struct SpaceCleanerPopoverView: View {
     @ObservedObject public var store: SpaceCleanerStore
     public let onBack: () -> Void
-    public let onOpenConsole: () -> Void
+    public let onOpenConsole: (String) -> Void
 
     public init(
         store: SpaceCleanerStore,
         onBack: @escaping () -> Void,
-        onOpenConsole: @escaping () -> Void
+        onOpenConsole: @escaping (String) -> Void
     ) {
         self.store = store
         self.onBack = onBack
@@ -21,8 +21,25 @@ public struct SpaceCleanerPopoverView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SubpageHeader(title: "空间清理", onBack: onBack) {
-                if store.isScanning {
+            SubpageHeader(title: "清理与启动", onBack: onBack) {
+                if store.consoleTab == .startup {
+                    Button {
+                        store.refreshStartupItems()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 9.5, weight: .semibold))
+                            Text("刷新")
+                                .font(.system(size: 10.5, weight: .medium))
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(Capsule().fill(Color.primary.opacity(0.10)))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(store.isScanningStartupItems)
+                } else if store.isScanning {
                     Button {
                         store.cancelScan()
                     } label: {
@@ -53,6 +70,18 @@ public struct SpaceCleanerPopoverView: View {
                 }
             }
 
+            // Segmented switcher so both Space Cleanup and Startup Items are immediately visible & accessible
+            Picker("", selection: $store.consoleTab) {
+                ForEach(SpaceCleanerConsoleTab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            if store.consoleTab == .startup {
+                popoverStartupContent
+            } else {
             // 1. Compact Disk Overview & Action Header
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .firstTextBaseline) {
@@ -204,22 +233,27 @@ public struct SpaceCleanerPopoverView: View {
                         }
                     }
                 }
-                .frame(maxHeight: 274)
+                .frame(maxHeight: 244)
+            }
             }
 
             // 3. Footer
             HStack {
-                Button("开机启动项…") {
-                    store.consoleTab = .startup
-                    onOpenConsole()
+                if store.consoleTab == .startup {
+                    Button("系统登录项设置…") {
+                        store.openLoginItemsSettings()
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                } else {
+                    Text("按安全等级分级 · 勾选可控")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
                 }
-                .font(.system(size: 11, weight: .medium))
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
                 Spacer()
                 Button("控制台详查…") {
-                    store.consoleTab = .cleanup
-                    onOpenConsole()
+                    onOpenConsole(store.consoleTab == .startup ? "startupItems" : "spaceCleaner")
                 }
                 .font(.system(size: 11.5, weight: .medium))
                 .buttonStyle(.plain)
@@ -230,9 +264,162 @@ public struct SpaceCleanerPopoverView: View {
         .padding(14)
         .onAppear {
             store.refreshVolumeSummary()
-            if !store.hasScanned && !store.isScanning && !store.isCleaning {
+            if store.consoleTab == .startup {
+                if !store.hasScannedStartupItems && !store.isScanningStartupItems {
+                    store.refreshStartupItems()
+                }
+            } else if !store.hasScanned && !store.isScanning && !store.isCleaning {
                 store.startScan()
             }
+        }
+        .onChange(of: store.consoleTab) { _, newTab in
+            if newTab == .startup && !store.hasScannedStartupItems && !store.isScanningStartupItems {
+                store.refreshStartupItems()
+            } else if newTab == .cleanup && !store.hasScanned && !store.isScanning && !store.isCleaning {
+                store.startScan()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var popoverStartupContent: some View {
+        let toggleableGroups = store.toggleableStartupGroups
+        let btmGroups = store.systemManagedStartupGroups
+
+        if store.isScanningStartupItems && store.startupItems.isEmpty {
+            VStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("正在检测开机启动项与系统后台项…")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 28)
+            .glassBentoCard(cornerRadius: 15)
+        } else {
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 8) {
+                    // Section 1: Directly toggleable LaunchAgents / LaunchDaemons
+                    if !toggleableGroups.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("可直接开关")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text("\(toggleableGroups.count) 个应用")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.tertiary)
+                                    .monospacedDigit()
+                            }
+                            .padding(.horizontal, 4)
+
+                            ForEach(toggleableGroups) { group in
+                                HStack(spacing: 8) {
+                                    if let icon = store.appIcon(forPath: group.appBundlePath) {
+                                        Image(nsImage: icon)
+                                            .resizable()
+                                            .interpolation(.high)
+                                            .frame(width: 22, height: 22)
+                                    } else {
+                                        Image(systemName: "bolt.fill")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundStyle(.indigo)
+                                            .frame(width: 22, height: 22)
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(group.displayName)
+                                            .font(.system(size: 11.5, weight: .semibold))
+                                            .lineLimit(1)
+                                        Text("\(group.status.label) · \(group.items.count) 项")
+                                            .font(.system(size: 9.5))
+                                            .foregroundStyle(group.status.color)
+                                            .monospacedDigit()
+                                    }
+
+                                    Spacer(minLength: 4)
+
+                                    if store.togglingStartupItemID == group.id {
+                                        ProgressView().controlSize(.mini)
+                                    } else {
+                                        Toggle("", isOn: Binding(
+                                            get: { group.isAnyEnabled },
+                                            set: { store.setStartupGroupEnabled(group, enabled: $0) }
+                                        ))
+                                        .toggleStyle(.switch)
+                                        .controlSize(.mini)
+                                        .labelsHidden()
+                                    }
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                            }
+                        }
+                        .padding(7)
+                        .glassBentoCard(cornerRadius: 14)
+                    }
+
+                    // Section 2: System-managed (BTM) apps -> Jump to System Settings
+                    if !btmGroups.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("系统托管（前往系统设置开关）")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text("\(btmGroups.count) 个应用")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.tertiary)
+                                    .monospacedDigit()
+                            }
+                            .padding(.horizontal, 4)
+
+                            ForEach(btmGroups) { group in
+                                HStack(spacing: 8) {
+                                    if let icon = store.appIcon(forPath: group.appBundlePath) {
+                                        Image(nsImage: icon)
+                                            .resizable()
+                                            .interpolation(.high)
+                                            .frame(width: 22, height: 22)
+                                    } else {
+                                        Image(systemName: "app.badge")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 22, height: 22)
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(group.displayName)
+                                            .font(.system(size: 11.5, weight: .medium))
+                                            .lineLimit(1)
+                                        Text(group.hasRunningItem ? "后台运行中 · 系统托管" : "内嵌登录项 · 系统托管")
+                                            .font(.system(size: 9.5))
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer(minLength: 4)
+
+                                    Button("系统设置") {
+                                        store.openLoginItemsSettings()
+                                    }
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(ConsoleTheme.accent)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(Capsule().fill(ConsoleTheme.accent.opacity(0.14)))
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                            }
+                        }
+                        .padding(7)
+                        .glassBentoCard(cornerRadius: 14)
+                    }
+                }
+            }
+            .frame(maxHeight: 332)
         }
     }
 
@@ -536,40 +723,14 @@ public struct SpaceCleanerConsoleView: View {
         let isDark = (colorScheme == .dark)
 
         ConsolePageContainer(
-            title: "空间清理与启动项",
-            subtitle: "纯原生 API 零子进程扫描：按安全等级分级清理缓存与已卸载软件残留，同时透明检测本机开机启动项与僵尸后台代理。"
+            title: "空间清理",
+            subtitle: "纯原生 API 零子进程扫描：按安全等级分级清理缓存、开发构建产物与已卸载软件残留，每一项均可展开查看路径、勾选控制并生成清理报告。"
         ) {
-            // 0. Top Tab Switcher (Space Cleanup | Startup Items)
-            HStack(spacing: 10) {
-                Picker("", selection: $store.consoleTab) {
-                    ForEach(SpaceCleanerConsoleTab.allCases) { tab in
-                        Text(tab.rawValue).tag(tab)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 240)
-
-                Spacer()
-
-                if store.consoleTab == .startup && store.orphanedStartupCount > 0 {
-                    Text("发现 \(store.orphanedStartupCount) 个已失效僵尸启动项")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.orange.opacity(0.14)))
-                }
-            }
-
-            if store.consoleTab == .startup {
-                startupItemsContent(isDark: isDark)
-            } else {
             // 1. Module Enable Toggle
             ConsoleCard {
                 ConsoleRow(
-                    title: "启用「空间清理」模块",
-                    subtitle: "在菜单栏概览面板展示空间清理入口；不打开页面时 0 后台扫描开销"
+                    title: "启用「清理与启动」模块",
+                    subtitle: "在菜单栏概览面板展示空间清理与开机启动项入口；不打开页面时 0 后台扫描开销"
                 ) {
                     ConsoleSwitch(isOn: $moduleSettings.spaceCleanerEnabled)
                 }
@@ -848,189 +1009,12 @@ public struct SpaceCleanerConsoleView: View {
                     subtitle: "「极安全 / 推荐清理」默认勾选；运行中的浏览器/IDE 缓存自动取消默认勾选；已卸载软件残留经已装 App 与 LaunchServices 双重核验，与安装包/大文件一样默认不选且清理时移至废纸篓，随时可还原"
                 ) { EmptyView() }
             }
-            }
         }
         .onAppear {
             store.refreshVolumeSummary()
-            if store.consoleTab == .startup {
-                if !store.hasScannedStartupItems && !store.isScanningStartupItems {
-                    store.refreshStartupItems()
-                }
-            } else if !store.hasScanned && !store.isScanning && !store.isCleaning {
+            if !store.hasScanned && !store.isScanning && !store.isCleaning {
                 store.startScan()
             }
-        }
-        .onChange(of: store.consoleTab) { _, newTab in
-            if newTab == .startup && !store.hasScannedStartupItems && !store.isScanningStartupItems {
-                store.refreshStartupItems()
-            } else if newTab == .cleanup && !store.hasScanned && !store.isScanning && !store.isCleaning {
-                store.startScan()
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func startupItemsContent(isDark: Bool) -> some View {
-        // 1. Startup Summary Card
-        ConsoleCard("开机启动项与后台代理总览") {
-            HStack(spacing: 14) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.indigo.opacity(isDark ? 0.22 : 0.12))
-                        .frame(width: 44, height: 44)
-                    Image(systemName: "bolt.shield.fill")
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(.indigo)
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(store.isScanningStartupItems
-                         ? "正在检测开机启动项与后台服务…"
-                         : "共检测到 \(store.startupItems.count) 个开机启动与后台项")
-                        .font(.system(size: 15.5, weight: .bold))
-                        .monospacedDigit()
-                    Text("已开启 \(store.enabledStartupCount) 项 · 运行中 \(store.runningStartupCount) 项 · 已失效残留 \(store.orphanedStartupCount) 项")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-
-                Spacer(minLength: 8)
-
-                HStack(spacing: 8) {
-                    ConsoleActionButton(store.isScanningStartupItems ? "扫描中…" : "重新检测", variant: .standard) {
-                        store.refreshStartupItems()
-                    }
-                    .disabled(store.isScanningStartupItems)
-
-                    ConsoleActionButton("系统登录项设置…", variant: .prominent) {
-                        store.openLoginItemsSettings()
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-        }
-
-        if let msg = store.startupStatusMessage, !msg.isEmpty {
-            ConsoleBanner(
-                icon: "checkmark.circle.fill",
-                tint: ConsoleTheme.accent,
-                title: msg,
-                subtitle: "用户代理支持随时切换开关；系统级与 BTM 项受 macOS 保护请在系统设置中调整。"
-            )
-        }
-
-        // 2. Filter Bar
-        HStack(spacing: 8) {
-            Picker("", selection: $store.startupFilter) {
-                ForEach(StartupItemFilter.allCases) { f in
-                    Text(f.rawValue).tag(f)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 320)
-
-            Spacer()
-
-            Text("共 \(store.startupAppGroups.count) 个应用")
-                .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-        }
-        .padding(.horizontal, 2)
-
-        // 3. App-Grouped Startup Items Table (Tencent Lemon style: App | Status | Master Switch | N Items v)
-        let groups = store.startupAppGroups
-        if store.isScanningStartupItems && groups.isEmpty {
-            ConsoleCard {
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("正在解析 LaunchAgents、LaunchDaemons 与应用内嵌登录助手…")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(18)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } else if groups.isEmpty {
-            ConsoleCard {
-                HStack(spacing: 10) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(ConsoleTheme.accent)
-                    Text(store.startupFilter == .orphaned
-                         ? "未检测到目标程序已丢失的僵尸启动项"
-                         : "当前分类下暂无开机启动项")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } else {
-            ConsoleCard {
-                VStack(alignment: .leading, spacing: 0) {
-                    // Clean Table Column Header
-                    HStack(spacing: 10) {
-                        Text("应用程序")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Text("启用状态")
-                            .frame(width: 84, alignment: .center)
-                        Text("设置启动项")
-                            .frame(width: 78, alignment: .center)
-                        Text("自启项")
-                            .frame(width: 64, alignment: .trailing)
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-
-                    ForEach(groups) { group in
-                        ConsoleRowDivider()
-                        ConsoleStartupGroupRow(
-                            group: group,
-                            appIcon: store.appIcon(forPath: group.appBundlePath),
-                            isExpanded: store.expandedStartupGroups.contains(group.id),
-                            togglingID: store.togglingStartupItemID,
-                            onToggleExpand: { store.toggleStartupGroupExpanded(group.id) },
-                            onToggleGroup: group.canToggleGroup ? { enabled in
-                                store.setStartupGroupEnabled(group, enabled: enabled)
-                            } : nil,
-                            onToggleItem: { item, enabled in
-                                store.setStartupItemEnabled(item, enabled: enabled)
-                            },
-                            onOpenSystemSettings: { store.openLoginItemsSettings() },
-                            onReveal: { path in store.revealInFinder(path) },
-                            onTrash: { item in store.trashUserStartupItem(item) }
-                        )
-                    }
-                }
-            }
-        }
-
-        // 4. Guidance Card
-        ConsoleCard("权限边界与开关原理") {
-            ConsoleRow(
-                title: "用户代理 & 系统代理（LaunchAgents）· 免密直接开关",
-                subtitle: "直接通过 macOS launchctl 管理当前用户会话并无损暂存配置，关闭即刻生效，随时可重新开启"
-            ) { EmptyView() }
-
-            ConsoleRowDivider()
-
-            ConsoleRow(
-                title: "系统守护进程（/Library/LaunchDaemons，如 Clash Verge / AweSun）· 按需触发系统授权",
-                subtitle: "YOMO 不安装常驻 root 后台服务；仅在你点击开关时弹出 macOS 原生触控 ID / 管理员授权窗口，授权一次即可批量生效"
-            ) { EmptyView() }
-
-            ConsoleRowDivider()
-
-            ConsoleRow(
-                title: "应用内嵌登录项（macOS BTM）",
-                subtitle: "由系统「登录项与扩展」统一锁管，可切换至「应用内嵌」查看并一键前往系统设置调整"
-            ) { EmptyView() }
         }
     }
 
@@ -1050,6 +1034,237 @@ public struct SpaceCleanerConsoleView: View {
             return "已勾选 \(store.selectedItemCount) / \(store.totalItemCount) 项 · 本次将释放 \(SpaceByteFormatter.format(store.selectedBytes))"
         }
         return "扫描应用缓存、浏览器、Xcode/Homebrew/npm/pip/Cargo/Gradle、旧安装包、大文件与废纸篓"
+    }
+}
+
+// MARK: - Dedicated Hub Console View: Startup & Background Items Manager
+
+public struct StartupItemsConsoleView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject public var store: SpaceCleanerStore
+
+    public init(store: SpaceCleanerStore) {
+        self.store = store
+    }
+
+    public var body: some View {
+        let isDark = (colorScheme == .dark)
+        let toggleableGroups = store.toggleableStartupGroups
+        let btmGroups = store.systemManagedStartupGroups
+
+        ConsolePageContainer(
+            title: "开机启动项",
+            subtitle: "透明盘点本机所有开机自启与后台服务：launchd 项支持直接在 YOMO 一键开关，系统 BTM 托管项全部列出并提供系统设置直达。"
+        ) {
+            // 1. Summary Card
+            ConsoleCard("开机启动项与后台服务总览") {
+                HStack(spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.indigo.opacity(isDark ? 0.22 : 0.12))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: "bolt.shield.fill")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(.indigo)
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(store.isScanningStartupItems
+                             ? "正在检测开机启动项与后台服务…"
+                             : "检测到 \(store.launchdItems.count) 个可直接开关项 · \(store.systemManagedItems.count) 个系统托管项")
+                            .font(.system(size: 15, weight: .bold))
+                            .monospacedDigit()
+                        Text("已开启 \(store.enabledStartupCount) 项 · 后台运行中 \(store.runningStartupCount) 项 · 僵尸残留 \(store.orphanedStartupCount) 项")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+
+                    Spacer(minLength: 8)
+
+                    HStack(spacing: 8) {
+                        ConsoleActionButton(store.isScanningStartupItems ? "扫描中…" : "重新检测", variant: .standard) {
+                            store.refreshStartupItems()
+                        }
+                        .disabled(store.isScanningStartupItems)
+
+                        ConsoleActionButton("打开系统登录项…", variant: .prominent) {
+                            store.openLoginItemsSettings()
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+            }
+
+            if let msg = store.startupStatusMessage, !msg.isEmpty {
+                ConsoleBanner(
+                    icon: "checkmark.circle.fill",
+                    tint: ConsoleTheme.accent,
+                    title: msg,
+                    subtitle: "用户代理支持随时切换开关；系统级与 BTM 项受 macOS 保护请在系统设置中调整。"
+                )
+            }
+
+            // 2. Filter Bar
+            HStack(spacing: 8) {
+                Picker("", selection: $store.startupFilter) {
+                    ForEach(StartupItemFilter.allCases) { f in
+                        Text(f.rawValue).tag(f)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 380)
+
+                Spacer()
+
+                Text("共 \(toggleableGroups.count + btmGroups.count) 个应用")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .padding(.horizontal, 2)
+
+            if store.isScanningStartupItems && toggleableGroups.isEmpty && btmGroups.isEmpty {
+                ConsoleCard {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("正在解析 LaunchAgents、LaunchDaemons 与应用内嵌后台服务…")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(18)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else if toggleableGroups.isEmpty && btmGroups.isEmpty {
+                ConsoleCard {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundStyle(ConsoleTheme.accent)
+                        Text(store.startupFilter == .orphaned
+                             ? "未检测到目标程序已丢失的僵尸启动项"
+                             : "当前筛选条件下暂无启动项")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                // Card A: Directly Toggleable LaunchAgents & LaunchDaemons (App-Grouped Lemon Style)
+                if !toggleableGroups.isEmpty {
+                    ConsoleCard("可直接在 YOMO 开关的启动项（LaunchAgents / LaunchDaemons）") {
+                        VStack(alignment: .leading, spacing: 0) {
+                            HStack(spacing: 10) {
+                                Text("应用程序")
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text("启用状态")
+                                    .frame(width: 84, alignment: .center)
+                                Text("设置启动项")
+                                    .frame(width: 78, alignment: .center)
+                                Text("自启项")
+                                    .frame(width: 64, alignment: .trailing)
+                            }
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+
+                            ForEach(toggleableGroups) { group in
+                                ConsoleRowDivider()
+                                ConsoleStartupGroupRow(
+                                    group: group,
+                                    appIcon: store.appIcon(forPath: group.appBundlePath),
+                                    isExpanded: store.expandedStartupGroups.contains(group.id),
+                                    togglingID: store.togglingStartupItemID,
+                                    onToggleExpand: { store.toggleStartupGroupExpanded(group.id) },
+                                    onToggleGroup: group.canToggleGroup ? { enabled in
+                                        store.setStartupGroupEnabled(group, enabled: enabled)
+                                    } : nil,
+                                    onToggleItem: { item, enabled in
+                                        store.setStartupItemEnabled(item, enabled: enabled)
+                                    },
+                                    onOpenSystemSettings: { store.openLoginItemsSettings() },
+                                    onReveal: { path in store.revealInFinder(path) },
+                                    onTrash: { item in store.trashUserStartupItem(item) }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Card B: System-Managed (macOS BTM) Embedded Login Items & SMAppService Helpers -> Direct jump to System Settings
+                if !btmGroups.isEmpty {
+                    ConsoleCard("系统托管的后台登录项（受 macOS SIP 锁管 · 请前往系统设置开关）") {
+                        VStack(alignment: .leading, spacing: 0) {
+                            HStack(spacing: 10) {
+                                Text("应用程序")
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text("当前状态")
+                                    .frame(width: 84, alignment: .center)
+                                Text("管理方式")
+                                    .frame(width: 78, alignment: .center)
+                                Text("内嵌项")
+                                    .frame(width: 64, alignment: .trailing)
+                            }
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+
+                            ForEach(btmGroups) { group in
+                                ConsoleRowDivider()
+                                ConsoleStartupGroupRow(
+                                    group: group,
+                                    appIcon: store.appIcon(forPath: group.appBundlePath),
+                                    isExpanded: store.expandedStartupGroups.contains(group.id),
+                                    togglingID: store.togglingStartupItemID,
+                                    onToggleExpand: { store.toggleStartupGroupExpanded(group.id) },
+                                    onToggleGroup: nil,
+                                    onToggleItem: { _, _ in },
+                                    onOpenSystemSettings: { store.openLoginItemsSettings() },
+                                    onReveal: { path in store.revealInFinder(path) },
+                                    onTrash: { _ in }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4. Guidance Card
+            ConsoleCard("权限边界与说明") {
+                ConsoleRow(
+                    title: "用户代理 & 系统代理（LaunchAgents）· 免密直接开关",
+                    subtitle: "直接通过 macOS launchctl 管理当前用户会话并无损暂存配置，关闭即刻生效，随时可重新开启"
+                ) { EmptyView() }
+
+                ConsoleRowDivider()
+
+                ConsoleRow(
+                    title: "系统守护进程（/Library/LaunchDaemons，如 Clash Verge / AweSun）· 按需系统授权",
+                    subtitle: "YOMO 不安装常驻 root 后台守护；仅在点击开关时触发 macOS 原生触控 ID / 密码授权，整组批量生效"
+                ) { EmptyView() }
+
+                ConsoleRowDivider()
+
+                ConsoleRow(
+                    title: "系统「后台 App 活动」（macOS BTM）",
+                    subtitle: "部分应用（如 Chrome、ChatGPT、IDE 等）通过苹果私有 BTM 数据库注册后台任务，受 SIP 保护第三方无法修改；点击上方「打开系统登录项…」即可直达苹果官方总表管理"
+                ) {
+                    ConsoleActionButton("去系统设置", variant: .standard) {
+                        store.openLoginItemsSettings()
+                    }
+                }
+            }
+        }
+        .onAppear {
+            if !store.hasScannedStartupItems && !store.isScanningStartupItems {
+                store.refreshStartupItems()
+            }
+        }
     }
 }
 

@@ -1061,7 +1061,7 @@ struct OverviewView: View {
                     Image(systemName: "sparkles")
                         .font(.system(size: 13.5, weight: .semibold))
                         .foregroundStyle(spaceCleanerStore.totalReclaimableBytes > 0 ? ConsoleTheme.accent : Color.primary)
-                    Text("空间清理")
+                    Text("清理与启动")
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
@@ -1082,7 +1082,7 @@ struct OverviewView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("空间清理")
+                        Text(span >= 4 ? "空间清理 & 启动项" : "清理与启动")
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
@@ -1122,7 +1122,7 @@ struct OverviewView: View {
                 onNavigate(.spaceCleaner)
             }
         }
-        .help("扫描并勾选清理缓存、开发构建产物、安装包与大文件")
+        .help("空间清理与开机启动项管理（缓存 / 卸载残留 / LaunchAgents / 系统托管项）")
     }
 
     private func volumeTile(height: CGFloat, isEditing: Bool) -> some View {

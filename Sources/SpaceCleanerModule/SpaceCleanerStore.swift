@@ -164,8 +164,9 @@ public enum StartupItemScope: String, CaseIterable, Identifiable, Sendable {
 }
 
 public enum StartupItemFilter: String, CaseIterable, Identifiable {
-    case launchItems = "启动项管理"
-    case loginItems = "应用内嵌"
+    case all = "全部"
+    case toggleable = "可直接开关"
+    case systemManaged = "系统托管"
     case orphaned = "已失效残留"
 
     public var id: String { rawValue }
@@ -456,7 +457,7 @@ public final class SpaceCleanerStore: ObservableObject {
 
     // Startup / Login Items Inspector state (on-demand, zero background polling)
     @Published public var consoleTab: SpaceCleanerConsoleTab = .cleanup
-    @Published public var startupFilter: StartupItemFilter = .launchItems
+    @Published public var startupFilter: StartupItemFilter = .all
     @Published public var expandedStartupGroups: Set<String> = []
     @Published public private(set) var startupItems: [StartupItemInfo] = []
     @Published public private(set) var isScanningStartupItems: Bool = false
@@ -508,9 +509,9 @@ public final class SpaceCleanerStore: ObservableObject {
                 : "空间非常干净"
         }
         if volumeSummary.availableBytes > 0 {
-            return "可用 \(SpaceByteFormatter.format(volumeSummary.availableBytes))"
+            return "可用 \(SpaceByteFormatter.format(volumeSummary.availableBytes)) · 启动项管理"
         }
-        return "一键扫描释放空间"
+        return "清理缓存 · 管理开机启动项"
     }
 
     // MARK: - Scanning (On-Demand, Zero Subprocesses, Zero Idle Overhead)
@@ -668,23 +669,47 @@ public final class SpaceCleanerStore: ObservableObject {
         }
     }
 
-    // MARK: - Startup Items Inspector (Zero Subprocess Scan, App-Grouped Lemon-Style Management)
+    // MARK: - Startup Items Inspector (Zero Subprocess Scan, App-Grouped Management)
 
     public var launchdItems: [StartupItemInfo] {
         startupItems.filter { $0.scope != .appLoginItem }
     }
 
-    public var startupAppGroups: [StartupAppGroup] {
-        let baseItems: [StartupItemInfo]
-        switch startupFilter {
-        case .launchItems:
-            baseItems = startupItems.filter { $0.scope != .appLoginItem }
-        case .loginItems:
-            baseItems = startupItems.filter { $0.scope == .appLoginItem }
-        case .orphaned:
-            baseItems = startupItems.filter(\.isOrphanedBinary)
-        }
+    public var systemManagedItems: [StartupItemInfo] {
+        startupItems.filter { $0.scope == .appLoginItem }
+    }
 
+    public var toggleableStartupGroups: [StartupAppGroup] {
+        let base: [StartupItemInfo]
+        switch startupFilter {
+        case .all, .toggleable:
+            base = launchdItems
+        case .systemManaged:
+            return []
+        case .orphaned:
+            base = launchdItems.filter(\.isOrphanedBinary)
+        }
+        return buildAppGroups(from: base)
+    }
+
+    public var systemManagedStartupGroups: [StartupAppGroup] {
+        let base: [StartupItemInfo]
+        switch startupFilter {
+        case .all, .systemManaged:
+            base = systemManagedItems
+        case .toggleable:
+            return []
+        case .orphaned:
+            base = systemManagedItems.filter(\.isOrphanedBinary)
+        }
+        return buildAppGroups(from: base)
+    }
+
+    public var startupAppGroups: [StartupAppGroup] {
+        toggleableStartupGroups + systemManagedStartupGroups
+    }
+
+    private func buildAppGroups(from baseItems: [StartupItemInfo]) -> [StartupAppGroup] {
         var grouped: [String: [StartupItemInfo]] = [:]
         var metaByKey: [String: (name: String, appPath: String?)] = [:]
 
@@ -703,7 +728,7 @@ public final class SpaceCleanerStore: ObservableObject {
                 return a.label < b.label
             }
             return StartupAppGroup(
-                id: key,
+                id: "\(list[0].scope == .appLoginItem ? "btm" : "launchd")::\(key)",
                 displayName: meta.name,
                 appBundlePath: meta.appPath,
                 items: sortedList
@@ -2303,21 +2328,19 @@ private enum SpaceCleanerEngine {
             }
         }
 
-        // Also inspect embedded modern LoginItems inside /Applications and ~/Applications (read-only awareness)
+        // Also inspect embedded modern BTM items inside /Applications and ~/Applications (up to depth 2):
+        // Contents/Library/LoginItems/*.app, Contents/Library/LaunchAgents/*.plist, Contents/Library/LaunchDaemons/*.plist
         let appDirs = ["/Applications", URL(fileURLWithPath: home).appendingPathComponent("Applications").path]
-        for appDir in appDirs {
-            guard let apps = try? fm.contentsOfDirectory(
-                at: URL(fileURLWithPath: appDir),
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-            ) else { continue }
+        var seenAppPaths = Set<String>()
 
-            for appURL in apps where appURL.pathExtension.lowercased() == "app" {
-                let loginItemsDir = appURL.appendingPathComponent("Contents/Library/LoginItems")
-                guard let helpers = try? fm.contentsOfDirectory(at: loginItemsDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
-                    continue
-                }
-                let parentName = appURL.deletingPathExtension().lastPathComponent
+        func inspectAppBundleForBTM(_ appURL: URL) {
+            let stdAppPath = appURL.standardizedFileURL.path
+            guard seenAppPaths.insert(stdAppPath).inserted else { return }
+            let parentName = appURL.deletingPathExtension().lastPathComponent
+
+            // 1) Embedded LoginItems (*.app)
+            let loginItemsDir = appURL.appendingPathComponent("Contents/Library/LoginItems")
+            if let helpers = try? fm.contentsOfDirectory(at: loginItemsDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
                 for helperURL in helpers where helperURL.pathExtension.lowercased() == "app" {
                     let helperBundle = Bundle(url: helperURL)
                     let bid = helperBundle?.bundleIdentifier ?? helperURL.deletingPathExtension().lastPathComponent
@@ -2327,11 +2350,11 @@ private enum SpaceCleanerEngine {
                         StartupItemInfo(
                             id: "loginItem::\(helperURL.path)",
                             label: bid,
-                            displayName: "\(parentName)（内嵌登录助手）",
+                            displayName: parentName,
                             scope: .appLoginItem,
                             sourcePath: helperURL.standardizedFileURL.path,
                             executablePath: helperBundle?.executablePath,
-                            appBundlePath: appURL.standardizedFileURL.path,
+                            appBundlePath: stdAppPath,
                             runAtLoad: true,
                             keepAlive: false,
                             isEnabled: isEnabled,
@@ -2342,6 +2365,64 @@ private enum SpaceCleanerEngine {
                             canMoveToTrash: false
                         )
                     )
+                }
+            }
+
+            // 2) Embedded SMAppService LaunchAgents / LaunchDaemons (*.plist)
+            for sub in ["Contents/Library/LaunchAgents", "Contents/Library/LaunchDaemons"] {
+                let subURL = appURL.appendingPathComponent(sub)
+                guard let plists = try? fm.contentsOfDirectory(at: subURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+                    continue
+                }
+                for plistURL in plists where plistURL.pathExtension.lowercased() == "plist" {
+                    guard let data = try? Data(contentsOf: plistURL),
+                          let dict = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] else {
+                        continue
+                    }
+                    let label = (dict["Label"] as? String) ?? plistURL.deletingPathExtension().lastPathComponent
+                    let isRunning = runningSnap.bundleIDs.contains(label.lowercased())
+                    let isEnabled = userDisabledOverrides[label].map { !$0 } ?? (systemDisabledOverrides[label].map { !$0 } ?? isRunning)
+                    results.append(
+                        StartupItemInfo(
+                            id: "btmPlist::\(plistURL.path)",
+                            label: label,
+                            displayName: parentName,
+                            scope: .appLoginItem,
+                            sourcePath: plistURL.standardizedFileURL.path,
+                            executablePath: (dict["Program"] as? String) ?? (dict["ProgramArguments"] as? [String])?.first,
+                            appBundlePath: stdAppPath,
+                            runAtLoad: (dict["RunAtLoad"] as? Bool) ?? true,
+                            keepAlive: (dict["KeepAlive"] as? Bool) ?? false,
+                            isEnabled: isEnabled,
+                            isStoredInDisabledVault: false,
+                            isRunning: isRunning,
+                            isOrphanedBinary: false,
+                            canToggleDirectly: false,
+                            canMoveToTrash: false
+                        )
+                    )
+                }
+            }
+        }
+
+        for appDir in appDirs {
+            guard let entries = try? fm.contentsOfDirectory(
+                at: URL(fileURLWithPath: appDir),
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+
+            for entry in entries {
+                if entry.pathExtension.lowercased() == "app" {
+                    inspectAppBundleForBTM(entry)
+                } else {
+                    let rv = try? entry.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                    if rv?.isDirectory == true && rv?.isSymbolicLink != true,
+                       let nested = try? fm.contentsOfDirectory(at: entry, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                        for subApp in nested where subApp.pathExtension.lowercased() == "app" {
+                            inspectAppBundleForBTM(subApp)
+                        }
+                    }
                 }
             }
         }

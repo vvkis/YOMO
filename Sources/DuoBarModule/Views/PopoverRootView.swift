@@ -137,7 +137,7 @@ public struct PopoverRootView: View {
                     SpaceCleanerPopoverView(
                         store: spaceCleanerStore,
                         onBack: goBack,
-                        onOpenConsole: { onOpenConsole("spaceCleaner") }
+                        onOpenConsole: { target in onOpenConsole(target) }
                     )
                     .transition(pageTransition)
 

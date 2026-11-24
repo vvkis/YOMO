@@ -19,6 +19,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
     case clipboard = "clipboard"
     case keyboardLock = "keyboardLock"
     case spaceCleaner = "spaceCleaner"
+    case startupItems = "startupItems"
 
     public var id: String { rawValue }
 
@@ -33,6 +34,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
         case .clipboard: return "剪贴板"
         case .keyboardLock: return "键盘锁"
         case .spaceCleaner: return "空间清理"
+        case .startupItems: return "开机启动项"
         }
     }
 
@@ -47,6 +49,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
         case .clipboard: return "doc.on.clipboard"
         case .keyboardLock: return "keyboard"
         case .spaceCleaner: return "sparkles"
+        case .startupItems: return "bolt.shield"
         }
     }
 }
@@ -152,6 +155,8 @@ struct HubConsoleView: View {
                     KeyboardLockConsoleView(store: keyboardLockStore, moduleSettings: moduleSettings)
                 case .spaceCleaner:
                     SpaceCleanerConsoleView(store: spaceCleanerStore, moduleSettings: moduleSettings)
+                case .startupItems:
+                    StartupItemsConsoleView(store: spaceCleanerStore)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -293,11 +298,27 @@ private struct DashboardHomeView: View {
                 DashboardModuleRow(
                     icon: "sparkles",
                     tint: ConsoleTheme.accent,
-                    title: "空间清理（原生安全规则）",
-                    subtitle: spaceCleanerStore.overviewSubtitle,
+                    title: "空间清理（安全分级规则）",
+                    subtitle: spaceCleanerStore.totalReclaimableBytes > 0
+                        ? "扫描到可释放 \(SpaceByteFormatter.format(spaceCleanerStore.totalReclaimableBytes)) · 含缓存与卸载残留"
+                        : "扫描并勾选清理缓存、开发构建产物与卸载残留",
                     badgeText: nil,
                     isOn: $moduleSettings.spaceCleanerEnabled,
                     onOpen: { onSelect(.spaceCleaner) }
+                )
+
+                ConsoleRowDivider()
+
+                DashboardModuleRow(
+                    icon: "bolt.shield.fill",
+                    tint: .indigo,
+                    title: "开机启动项",
+                    subtitle: spaceCleanerStore.hasScannedStartupItems
+                        ? "可直接开关 \(spaceCleanerStore.toggleableStartupGroups.count) 款应用 · 系统托管 \(spaceCleanerStore.systemManagedStartupGroups.count) 款"
+                        : "管理 LaunchAgents / Daemons 开关，并展示系统托管登录项",
+                    badgeText: nil,
+                    isOn: nil,
+                    onOpen: { onSelect(.startupItems) }
                 )
             }
         }
