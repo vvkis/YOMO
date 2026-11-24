@@ -174,7 +174,9 @@ private final class UpdateDownloadDelegate: NSObject, URLSessionDownloadDelegate
 public final class AppUpdateStore: ObservableObject {
     public nonisolated static let githubRepo = "vvkis/YOMO"
     public nonisolated static let releasesPageURL = URL(string: "https://github.com/vvkis/YOMO/releases")!
-    private nonisolated static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/vvkis/YOMO/releases/latest")!
+    private nonisolated static let latestReleaseWebURL = URL(string: "https://github.com/vvkis/YOMO/releases/latest")!
+    private nonisolated static let releasesAtomURL = URL(string: "https://github.com/vvkis/YOMO/releases.atom")!
+    private nonisolated static let releaseAPIBaseURL = "https://api.github.com/repos/vvkis/YOMO/releases/tags/"
     private static let autoCheckInterval: TimeInterval = 24 * 60 * 60
 
     @AppStorage("updater.autoCheckEnabled") public var autoCheckEnabled: Bool = true {
@@ -464,34 +466,83 @@ public final class AppUpdateStore: ObservableObject {
         }
     }
 
+    private struct GitHubWebLatestPayload: Decodable, Sendable {
+        let tag_name: String?
+    }
+
     // MARK: - Networking, SemVer, Checksum & Extraction Helpers
 
+    /// Checks latest release using `github.com/<repo>/releases/latest` (NOT `api.github.com`),
+    /// completely bypassing GitHub's strict 60 req/hr unauthenticated IP API rate limit on shared proxy IPs.
+    /// Only fetches full metadata when a newer version is actually detected, with full web/Atom fallback.
     private nonisolated static func fetchLatestRelease(currentVersion: String) async throws -> AppReleaseInfo? {
-        var req = URLRequest(url: latestReleaseAPIURL)
-        req.timeoutInterval = 15
-        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        req.setValue("YOMO/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        // 1. Lightweight rate-limit-free tag discovery via GitHub web endpoint
+        var webReq = URLRequest(url: latestReleaseWebURL)
+        webReq.timeoutInterval = 15
+        webReq.setValue("application/json", forHTTPHeaderField: "Accept")
+        webReq.setValue("YOMO/\(currentVersion)", forHTTPHeaderField: "User-Agent")
 
-        let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse else {
+        let (webData, webResp) = try await URLSession.shared.data(for: webReq)
+        guard let http = webResp as? HTTPURLResponse else {
             throw NSError(domain: "YOMOUpdate", code: -1, userInfo: [NSLocalizedDescriptionKey: "网络响应异常，请稍后重试"])
         }
         if http.statusCode == 404 {
             throw NSError(domain: "YOMOUpdate", code: 404, userInfo: [NSLocalizedDescriptionKey: "GitHub 仓库暂未发布公开 Release 版本"])
         }
-        if http.statusCode == 403 {
-            throw NSError(domain: "YOMOUpdate", code: 403, userInfo: [NSLocalizedDescriptionKey: "GitHub API 访问受限，请稍后再试或直接打开发布页"])
-        }
         guard (200...299).contains(http.statusCode) else {
             throw NSError(domain: "YOMOUpdate", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "检查更新失败（HTTP \(http.statusCode)）"])
         }
 
-        let payload = try JSONDecoder().decode(GitHubReleasePayload.self, from: data)
-        if payload.draft == true {
+        // Resolve tag from JSON payload first, falling back to redirected `/releases/tag/<tag>` URL
+        let discoveredTag: String? = {
+            if let decoded = try? JSONDecoder().decode(GitHubWebLatestPayload.self, from: webData),
+               let tag = decoded.tag_name, !tag.isEmpty {
+                return tag
+            }
+            if let finalURL = http.url {
+                let comps = finalURL.pathComponents
+                if let tagIdx = comps.firstIndex(of: "tag"), tagIdx + 1 < comps.count {
+                    return comps[tagIdx + 1]
+                }
+            }
+            return nil
+        }()
+
+        guard let tagName = discoveredTag, !tagName.isEmpty else {
+            // No published release exists yet (GitHub stays at /releases)
             return nil
         }
 
-        // Prefer DMG installer (produced by scripts/build-release.sh), fallback to binary app ZIP (never source.zip)
+        let latestVersion = normalizeVersion(tagName)
+        guard isVersion(latestVersion, newerThan: currentVersion) else {
+            // Already up to date — finish immediately without ever touching api.github.com!
+            return nil
+        }
+
+        // 2. A newer version exists! Prefer rich API metadata if not rate-limited, otherwise fall back cleanly to web + Atom.
+        if let apiRelease = try? await fetchReleaseFromAPI(tagName: tagName, currentVersion: currentVersion) {
+            return apiRelease
+        }
+
+        return try await fetchReleaseFromWebFallback(tagName: tagName, version: latestVersion, currentVersion: currentVersion)
+    }
+
+    private nonisolated static func fetchReleaseFromAPI(tagName: String, currentVersion: String) async throws -> AppReleaseInfo? {
+        let encodedTag = tagName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? tagName
+        guard let apiURL = URL(string: releaseAPIBaseURL + encodedTag) else { return nil }
+        var req = URLRequest(url: apiURL)
+        req.timeoutInterval = 10
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        req.setValue("YOMO/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            return nil
+        }
+
+        let payload = try JSONDecoder().decode(GitHubReleasePayload.self, from: data)
+        if payload.draft == true { return nil }
+
         let installerAsset = payload.assets.first(where: {
             $0.name.lowercased().hasSuffix(".dmg")
         }) ?? payload.assets.first(where: {
@@ -502,7 +553,7 @@ public final class AppUpdateStore: ObservableObject {
         guard let asset = installerAsset,
               let assetURL = URL(string: asset.browser_download_url),
               let htmlURL = URL(string: payload.html_url) else {
-            throw NSError(domain: "YOMOUpdate", code: -2, userInfo: [NSLocalizedDescriptionKey: "最新版本未包含可用的 macOS 安装包（.dmg）"])
+            return nil
         }
 
         let checksumsURL = payload.assets
@@ -525,6 +576,114 @@ public final class AppUpdateStore: ObservableObject {
             assetSizeBytes: asset.size,
             checksumsURL: checksumsURL
         )
+    }
+
+    private nonisolated static func fetchReleaseFromWebFallback(
+        tagName: String,
+        version: String,
+        currentVersion: String
+    ) async throws -> AppReleaseInfo {
+        let encodedTag = tagName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? tagName
+        let htmlURL = URL(string: "https://github.com/\(githubRepo)/releases/tag/\(encodedTag)") ?? releasesPageURL
+        let downloadBase = "https://github.com/\(githubRepo)/releases/download/\(encodedTag)/"
+
+        // Discover exact DMG filename & SHA256SUMS.txt from the release's checksum manifest (zero API rate limit)
+        var assetName = "YOMO-v\(version).dmg"
+        var checksumsURL: URL? = nil
+        if let candidateSumsURL = URL(string: downloadBase + "SHA256SUMS.txt") {
+            var sumsReq = URLRequest(url: candidateSumsURL)
+            sumsReq.timeoutInterval = 10
+            sumsReq.setValue("YOMO/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+            if let (sumsData, sumsResp) = try? await URLSession.shared.data(for: sumsReq),
+               let http = sumsResp as? HTTPURLResponse,
+               (200...299).contains(http.statusCode),
+               let sumsText = String(data: sumsData, encoding: .utf8) {
+                checksumsURL = candidateSumsURL
+                for rawLine in sumsText.components(separatedBy: .newlines) {
+                    let parts = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .split(whereSeparator: { $0 == " " || $0 == "\t" })
+                    if parts.count >= 2 {
+                        let name = String(parts[1]).trimmingCharacters(in: CharacterSet(charactersIn: "*./"))
+                        if name.lowercased().hasSuffix(".dmg") {
+                            assetName = name
+                            break
+                        }
+                    }
+                }
+            }
+        }
+
+        let encodedAsset = assetName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? assetName
+        guard let assetURL = URL(string: downloadBase + encodedAsset) else {
+            throw NSError(domain: "YOMOUpdate", code: -2, userInfo: [NSLocalizedDescriptionKey: "无法构建新版本安装包下载地址"])
+        }
+
+        // Verify installer asset exists and read exact file size via lightweight HEAD request
+        var headReq = URLRequest(url: assetURL)
+        headReq.httpMethod = "HEAD"
+        headReq.timeoutInterval = 12
+        headReq.setValue("YOMO/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        let (_, headResp) = try await URLSession.shared.data(for: headReq)
+        guard let headHTTP = headResp as? HTTPURLResponse, (200...299).contains(headHTTP.statusCode) else {
+            throw NSError(domain: "YOMOUpdate", code: -2, userInfo: [NSLocalizedDescriptionKey: "最新版本未包含可用的 macOS 安装包（\(assetName)）"])
+        }
+        let sizeBytes = max(0, headHTTP.expectedContentLength)
+
+        // Best-effort release notes from unrate-limited releases.atom feed
+        let notes = (await fetchNotesFromAtomFeed(tagName: tagName, currentVersion: currentVersion)) ?? ""
+
+        return AppReleaseInfo(
+            tagName: tagName,
+            version: version,
+            title: "YOMO \(tagName)",
+            notes: notes,
+            publishedAt: nil,
+            htmlURL: htmlURL,
+            assetName: assetName,
+            assetDownloadURL: assetURL,
+            assetSizeBytes: sizeBytes,
+            checksumsURL: checksumsURL
+        )
+    }
+
+    private nonisolated static func fetchNotesFromAtomFeed(tagName: String, currentVersion: String) async -> String? {
+        var req = URLRequest(url: releasesAtomURL)
+        req.timeoutInterval = 8
+        req.setValue("YOMO/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let http = resp as? HTTPURLResponse,
+              (200...299).contains(http.statusCode),
+              let xml = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        // Locate the <entry> block matching `/<tagName></id>` and extract plain-text release notes
+        let entries = xml.components(separatedBy: "<entry>")
+        for entry in entries.dropFirst() {
+            guard entry.contains("/\(tagName)</id>") || entry.contains("/tag/\(tagName)\"") else { continue }
+            guard let startRange = entry.range(of: "<content"),
+                  let gtRange = entry.range(of: ">", range: startRange.upperBound..<entry.endIndex),
+                  let endRange = entry.range(of: "</content>", range: gtRange.upperBound..<entry.endIndex) else {
+                return nil
+            }
+            let raw = String(entry[gtRange.upperBound..<endRange.lowerBound])
+            let unescaped = raw
+                .replacingOccurrences(of: "&lt;", with: "<")
+                .replacingOccurrences(of: "&gt;", with: ">")
+                .replacingOccurrences(of: "&amp;", with: "&")
+                .replacingOccurrences(of: "&quot;", with: "\"")
+                .replacingOccurrences(of: "&#39;", with: "'")
+                .replacingOccurrences(of: "<br\\s*/?>", with: "\n", options: .regularExpression)
+                .replacingOccurrences(of: "</(p|li|h[1-6]|div)>", with: "\n", options: .regularExpression)
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            let cleaned = unescaped
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+            return cleaned.isEmpty ? nil : cleaned
+        }
+        return nil
     }
 
     public nonisolated static func normalizeVersion(_ raw: String) -> String {
