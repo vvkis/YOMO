@@ -347,15 +347,12 @@ struct OverviewView: View {
             .coordinateSpace(name: "BentoCanvas")
             .frame(width: gridTotalWidth, height: layout.totalHeight, alignment: .topLeading)
 
-            if layout.totalHeight > maxCanvasHeight {
-                ScrollView(.vertical, showsIndicators: false) {
-                    bentoCanvas
-                }
-                .scrollDisabled(dragState.draggingTile != nil)
-                .frame(width: gridTotalWidth, height: maxCanvasHeight)
-            } else {
+            ScrollView(.vertical, showsIndicators: false) {
                 bentoCanvas
             }
+            .scrollDisabled(dragState.draggingTile != nil || layout.totalHeight <= maxCanvasHeight)
+            .scrollClipDisabled(layout.totalHeight <= maxCanvasHeight)
+            .frame(width: gridTotalWidth, height: min(layout.totalHeight, maxCanvasHeight), alignment: .top)
 
             // Integrated Utility Footer
             HStack {
@@ -455,6 +452,25 @@ struct OverviewView: View {
         let draggedSpan = layout.spans[dragged] ?? moduleSettings.colSpan(for: dragged)
         let draggedRect = layout.frames[dragged]
 
+        // 0. Full-width (4×) tiles can never share a row: match whole row bands vertically
+        // so dragging straight up/down works across inter-tile gaps and never slices a multi-tile row in half.
+        if draggedSpan >= 4 {
+            for band in layout.rowBands {
+                let rowOtherTiles = band.tiles.filter { $0 != dragged }
+                guard let firstTile = rowOtherTiles.first,
+                      let lastTile = rowOtherTiles.last else {
+                    continue
+                }
+                let insetY = (band.maxY - band.minY) * 0.10
+                if point.y >= (band.minY + insetY) && point.y <= (band.maxY - insetY) {
+                    let bandMidY = (band.minY + band.maxY) * 0.5
+                    return point.y >= bandMidY
+                        ? (target: lastTile, placeAfter: true)
+                        : (target: firstTile, placeAfter: false)
+                }
+            }
+        }
+
         // 1. Direct hit on an existing tile's core region
         for (tile, rect) in layout.frames where tile != dragged {
             let hitBox = rect.insetBy(dx: rect.width * 0.12, dy: rect.height * 0.12)
@@ -463,15 +479,28 @@ struct OverviewView: View {
                 if let dRect = draggedRect, abs(dRect.midY - rect.midY) < 4 {
                     return (target: tile, placeAfter: point.x > rect.midX)
                 }
-                // Cross-row hit on a partial row's trailing tile: allow snapping right beside it if it fits
                 if let band = layout.rowBands.first(where: { $0.tiles.contains(tile) }) {
                     let otherTiles = band.tiles.filter { $0 != dragged }
                     let otherCols = otherTiles.reduce(0) { $0 + (layout.spans[$1] ?? $1.defaultColSpan) }
-                    if otherTiles.last == tile && (otherCols + draggedSpan <= 4) && point.x > rect.midX {
-                        return (target: tile, placeAfter: true)
+                    let tileSpan = layout.spans[tile] ?? tile.defaultColSpan
+
+                    // Partial row that can fit the dragged tile: allow snapping cleanly left or right of hit tile
+                    if otherCols + draggedSpan <= 4 {
+                        return (target: tile, placeAfter: point.x > rect.midX)
+                    }
+
+                    // Wide tiles (3×/4×) or tiles that cannot pair with the hit tile treat the target row
+                    // atomically (before first / after last) so multi-tile rows are never split into orphan fragments.
+                    if (draggedSpan >= 3 || tileSpan + draggedSpan > 4),
+                       let firstTile = otherTiles.first,
+                       let lastTile = otherTiles.last {
+                        let bandMidY = (band.minY + band.maxY) * 0.5
+                        return point.y >= bandMidY
+                            ? (target: lastTile, placeAfter: true)
+                            : (target: firstTile, placeAfter: false)
                     }
                 }
-                // Explicit vertical placement prevents reverse-jump oscillation on unmoved full-width rows
+                // Explicit vertical placement prevents reverse-jump oscillation on unmoved rows
                 return (target: tile, placeAfter: point.y > rect.midY)
             }
         }
