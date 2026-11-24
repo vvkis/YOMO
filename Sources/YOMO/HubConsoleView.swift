@@ -71,6 +71,7 @@ struct HubConsoleView: View {
     let clipboardStore: ClipboardStore
     let keyboardLockStore: KeyboardLockStore
     let spaceCleanerStore: SpaceCleanerStore
+    let updateStore: AppUpdateStore
 
     var body: some View {
         let isDark = (colorScheme == .dark)
@@ -96,16 +97,11 @@ struct HubConsoleView: View {
 
                 Spacer()
 
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(ConsoleTheme.accent)
-                        .frame(width: 6, height: 6)
-                    Text("YOMO · 单进程运行中")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                SidebarUpdateFooter(updateStore: updateStore) {
+                    withAnimation(.easeOut(duration: 0.14)) {
+                        viewModel.selectedSection = .dashboard
+                    }
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 12)
             }
             .padding(.horizontal, 10)
             .padding(.top, 8)
@@ -137,6 +133,7 @@ struct HubConsoleView: View {
                         clipboardStore: clipboardStore,
                         keyboardLockStore: keyboardLockStore,
                         spaceCleanerStore: spaceCleanerStore,
+                        updateStore: updateStore,
                         onSelect: { viewModel.selectedSection = $0 }
                     )
                 case .duobar:
@@ -163,7 +160,7 @@ struct HubConsoleView: View {
         }
         .background(ConsoleTheme.canvasBackground(isDark: isDark))
         .ignoresSafeArea(.all, edges: .top)
-        .frame(minWidth: 720, minHeight: 480)
+        .frame(minWidth: 820, minHeight: 540)
     }
 }
 
@@ -177,6 +174,7 @@ private struct DashboardHomeView: View {
     @ObservedObject var clipboardStore: ClipboardStore
     @ObservedObject var keyboardLockStore: KeyboardLockStore
     @ObservedObject var spaceCleanerStore: SpaceCleanerStore
+    let updateStore: AppUpdateStore
     let onSelect: (ConsoleSection) -> Void
 
     var body: some View {
@@ -320,6 +318,290 @@ private struct DashboardHomeView: View {
                     isOn: nil,
                     onOpen: { onSelect(.startupItems) }
                 )
+            }
+
+            // Software Update Card (GitHub Releases + SHA-256 + In-Place Upgrade preserving all settings)
+            AppUpdateCard(store: updateStore)
+        }
+    }
+}
+
+private struct SidebarUpdateFooter: View {
+    @ObservedObject var updateStore: AppUpdateStore
+    let onOpenUpdates: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let release = updateStore.state.availableRelease {
+                Button(action: onOpenUpdates) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("发现新版本 \(release.displayVersion)")
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(ConsoleTheme.accent)
+                    )
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 6)
+            }
+
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(ConsoleTheme.accent)
+                    .frame(width: 6, height: 6)
+                Text("YOMO \(updateStore.displayCurrentVersion) · 单进程")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+        }
+    }
+}
+
+private struct AppUpdateCard: View {
+    @ObservedObject var store: AppUpdateStore
+
+    var body: some View {
+        ConsoleCard("软件更新") {
+            VStack(spacing: 0) {
+                HStack(spacing: 13) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(iconTint.opacity(0.13))
+                            .frame(width: 34, height: 34)
+                        Image(systemName: iconName)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(iconTint)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2.5) {
+                        HStack(spacing: 7) {
+                            Text("YOMO \(store.displayCurrentVersion)（Build \(store.currentBuild)）")
+                                .font(.system(size: 13.5, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .monospacedDigit()
+
+                            if let badge = statusBadge {
+                                Text(badge.text)
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(badge.color)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(badge.color.opacity(0.13)))
+                            }
+                        }
+
+                        Text(statusSubtitle)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(isErrorState ? .orange : .secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 10)
+
+                    HStack(spacing: 8) {
+                        actionButtons
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 13)
+
+                // Download progress bar
+                if case .downloading(_, let progress, let downloaded, let total) = store.state {
+                    ConsoleRowDivider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        ProgressView(value: progress)
+                            .progressViewStyle(.linear)
+                            .tint(ConsoleTheme.accent)
+                        HStack {
+                            Text("正在从 GitHub Releases 下载安装包…")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(AppUpdateStore.formatByteSize(downloaded)) / \(AppUpdateStore.formatByteSize(total)) · \(Int(round(progress * 100)))%")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                }
+
+                // Release notes preview when a newer version is available
+                if let release = store.state.availableRelease, !release.notes.isEmpty {
+                    ConsoleRowDivider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("\(release.title) 更新说明")
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if release.assetSizeBytes > 0 {
+                                Text("\(release.assetName) · \(AppUpdateStore.formatByteSize(release.assetSizeBytes))")
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
+                        ScrollView(.vertical, showsIndicators: true) {
+                            Text(release.notes)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxHeight: 110)
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                }
+
+                ConsoleRowDivider()
+
+                ConsoleRow(
+                    title: "启动时自动检查更新",
+                    subtitle: "每 24 小时静默查询一次 GitHub Releases，无后台定时轮询；原地覆盖升级，完整继承全部偏好配置、剪贴板历史、菜单栏位置与开机自启设置"
+                ) {
+                    ConsoleSwitch(isOn: $store.autoCheckEnabled)
+                }
+            }
+        }
+    }
+
+    private var isErrorState: Bool {
+        if case .failed = store.state { return true }
+        return false
+    }
+
+    private var iconName: String {
+        switch store.state {
+        case .available, .downloading, .verifying:
+            return "arrow.down.circle.fill"
+        case .readyToInstall, .installing:
+            return "checkmark.seal.fill"
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        default:
+            return "arrow.triangle.2.circlepath.circle.fill"
+        }
+    }
+
+    private var iconTint: Color {
+        switch store.state {
+        case .available, .downloading, .verifying, .readyToInstall, .installing:
+            return ConsoleTheme.accent
+        case .failed:
+            return .orange
+        default:
+            return .blue
+        }
+    }
+
+    private var statusBadge: (text: String, color: Color)? {
+        switch store.state {
+        case .upToDate:
+            return ("已是最新", ConsoleTheme.accent)
+        case .available(let r):
+            return ("新版本 \(r.displayVersion)", ConsoleTheme.accent)
+        case .downloading(_, let p, _, _):
+            return ("下载中 \(Int(round(p * 100)))%", .blue)
+        case .verifying:
+            return ("正在校验", .blue)
+        case .readyToInstall(let r, _, _, let verified):
+            return (verified ? "\(r.displayVersion) · SHA-256 已校验" : "\(r.displayVersion) · 已就绪", ConsoleTheme.accent)
+        case .installing:
+            return ("正在重启升级", ConsoleTheme.accent)
+        case .failed:
+            return ("检查异常", .orange)
+        default:
+            return nil
+        }
+    }
+
+    private var statusSubtitle: String {
+        switch store.state {
+        case .idle:
+            if let last = store.lastCheckedText {
+                return "更新源：GitHub (\(AppUpdateStore.githubRepo)) · 上次检查 \(last)"
+            }
+            return "更新源：GitHub (\(AppUpdateStore.githubRepo)) · 点击右侧检查新版本"
+        case .checking:
+            return "正在连接 GitHub Releases 查询最新版本…"
+        case .upToDate:
+            if let last = store.lastCheckedText {
+                return "当前已是最新版本（检查时间 \(last)）"
+            }
+            return "当前已是最新版本"
+        case .available(let r):
+            return "检测到新版本 \(r.displayVersion)（\(AppUpdateStore.formatByteSize(r.assetSizeBytes))），支持原地无缝覆盖并继承所有配置"
+        case .downloading(let r, _, _, _):
+            return "正在下载 \(r.displayVersion) 安装包，下载完成后自动校验 SHA-256 并解压就绪"
+        case .verifying(let r):
+            return "正在校验 \(r.displayVersion) 安装包 SHA-256 指纹与应用包完整性…"
+        case .readyToInstall(let r, _, _, _):
+            return "\(r.displayVersion) 已准备完毕；点击「立即升级并重启」将原地替换当前应用并保留全部设置"
+        case .installing(let r):
+            return "正在平滑退出并替换为 \(r.displayVersion)，稍后自动重新打开…"
+        case .failed(let msg):
+            return msg
+        }
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        switch store.state {
+        case .checking:
+            ProgressView()
+                .controlSize(.small)
+                .padding(.trailing, 4)
+            ConsoleActionButton("检查中…", disabled: true) {}
+
+        case .available:
+            ConsoleActionButton("发布页") {
+                store.openReleasesPage()
+            }
+            ConsoleActionButton("下载更新", variant: .prominent) {
+                store.downloadAvailableUpdate()
+            }
+
+        case .downloading:
+            ConsoleActionButton("取消下载") {
+                store.cancelDownload()
+            }
+
+        case .verifying:
+            ProgressView()
+                .controlSize(.small)
+            ConsoleActionButton("校验中…", disabled: true) {}
+
+        case .readyToInstall:
+            ConsoleActionButton("立即升级并重启", variant: .prominent) {
+                store.installAndRelaunch()
+            }
+
+        case .installing:
+            ProgressView()
+                .controlSize(.small)
+            ConsoleActionButton("正在升级…", disabled: true) {}
+
+        case .idle, .upToDate, .failed:
+            ConsoleActionButton("发布页") {
+                store.openReleasesPage()
+            }
+            ConsoleActionButton("检查更新", variant: .prominent) {
+                store.checkForUpdates(userInitiated: true)
             }
         }
     }

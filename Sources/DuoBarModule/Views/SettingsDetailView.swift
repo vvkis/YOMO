@@ -5,7 +5,9 @@ struct SettingsDetailView: View {
     @ObservedObject var store: DuoBarStore
     @ObservedObject var prefs: AppPreferences
     @ObservedObject var moduleSettings: ModuleSettings
+    @ObservedObject var updateStore: AppUpdateStore
     let onBack: () -> Void
+    let onOpenConsole: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
@@ -119,6 +121,48 @@ struct SettingsDetailView: View {
                 }
                 .toggleStyle(.switch)
                 .controlSize(.small)
+
+                Divider().opacity(0.45)
+
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("版本 \(updateStore.displayCurrentVersion)")
+                            .font(.system(size: 12, weight: .medium))
+                            .monospacedDigit()
+                        Text(popoverUpdateSubtitle)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(updateStore.hasUpdateAvailable ? ConsoleTheme.accent : Color.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    if updateStore.hasUpdateAvailable {
+                        Button("去升级") {
+                            onOpenConsole()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(ConsoleTheme.accent))
+                    } else if case .checking = updateStore.state {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.75)
+                    } else {
+                        Button("检查更新") {
+                            updateStore.checkForUpdates(userInitiated: true)
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.primary.opacity(0.09)))
+                    }
+                }
             }
             .padding(10)
             .glassBentoCard(cornerRadius: 15)
@@ -126,6 +170,29 @@ struct SettingsDetailView: View {
         .padding(14)
         .onAppear {
             store.refreshLaunchAtLoginState()
+        }
+    }
+
+    private var popoverUpdateSubtitle: String {
+        switch updateStore.state {
+        case .idle:
+            return "原地升级，保留全部配置"
+        case .checking:
+            return "正在连接 GitHub Releases…"
+        case .upToDate:
+            return "已是最新版本"
+        case .available(let release):
+            return "发现新版本 \(release.displayVersion)"
+        case .downloading(_, let progress, _, _):
+            return "正在下载更新 \(Int(round(progress * 100)))%"
+        case .verifying:
+            return "正在校验安装包完整性…"
+        case .readyToInstall(let release, _, _, _):
+            return "\(release.displayVersion) 已就绪，前往升级"
+        case .installing:
+            return "正在替换并重启…"
+        case .failed(let msg):
+            return msg
         }
     }
 }

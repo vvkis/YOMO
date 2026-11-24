@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let moduleSettings = ModuleSettings()
     private let consoleViewModel = HubConsoleViewModel()
+    private let updateStore = AppUpdateStore()
     private var duoBarStore: DuoBarStore!
     private var displayStore: DisplayHiDPIStore!
     private var keepAwakeStore: KeepAwakeStore!
@@ -83,6 +84,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spaceCleanerStore.onSelfLoginItemChanged = { [weak self] in
             self?.duoBarStore.refreshLaunchAtLoginState()
         }
+        updateStore.onPrepareForUpgradeQuit = { [weak self] in
+            self?.keepAwakeStore?.deactivate()
+            self?.scrollReverserStore?.deactivate(persistPreference: false)
+            self?.clipboardStore?.stop()
+            self?.keyboardLockStore?.unlock()
+            self?.spaceCleanerStore?.cancelScan()
+            CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication)
+        }
+        updateStore.scheduleLaunchCheckIfDue()
 
         // 1. Setup single Menu Bar Status Item (default to rightmost third-party slot on first launch;
         //    subsequent manual ⌘-drag positions are persisted automatically by macOS via autosaveName)
@@ -123,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             clipboardStore: clipboardStore,
             keyboardLockStore: keyboardLockStore,
             spaceCleanerStore: spaceCleanerStore,
+            updateStore: updateStore,
             onDismiss: { [weak self] in
                 self?.panel.dismissAnimated()
             },
@@ -379,10 +390,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 scrollReverserStore: scrollReverserStore,
                 clipboardStore: clipboardStore,
                 keyboardLockStore: keyboardLockStore,
-                spaceCleanerStore: spaceCleanerStore
+                spaceCleanerStore: spaceCleanerStore,
+                updateStore: updateStore
             )
             let win = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 820, height: 560),
+                contentRect: NSRect(x: 0, y: 0, width: 980, height: 640),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
@@ -397,7 +409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             win.titlebarAppearsTransparent = true
             win.titlebarSeparatorStyle = .none
             win.isMovableByWindowBackground = true
-            win.minSize = NSSize(width: 720, height: 480)
+            win.minSize = NSSize(width: 820, height: 540)
             win.title = "YOMO 控制台"
             win.isReleasedWhenClosed = false
             win.contentViewController = NSHostingController(rootView: contentView)

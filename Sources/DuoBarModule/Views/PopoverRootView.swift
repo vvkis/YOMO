@@ -19,6 +19,7 @@ public struct PopoverRootView: View {
     public let clipboardStore: ClipboardStore
     public let keyboardLockStore: KeyboardLockStore
     public let spaceCleanerStore: SpaceCleanerStore
+    public let updateStore: AppUpdateStore
     public let onDismiss: () -> Void
     public let onOpenConsole: (String?) -> Void
     public let onQuit: () -> Void
@@ -33,6 +34,7 @@ public struct PopoverRootView: View {
         clipboardStore: ClipboardStore,
         keyboardLockStore: KeyboardLockStore,
         spaceCleanerStore: SpaceCleanerStore,
+        updateStore: AppUpdateStore,
         onDismiss: @escaping () -> Void,
         onOpenConsole: @escaping (String?) -> Void,
         onQuit: @escaping () -> Void
@@ -46,6 +48,7 @@ public struct PopoverRootView: View {
         self.clipboardStore = clipboardStore
         self.keyboardLockStore = keyboardLockStore
         self.spaceCleanerStore = spaceCleanerStore
+        self.updateStore = updateStore
         self.onDismiss = onDismiss
         self.onOpenConsole = onOpenConsole
         self.onQuit = onQuit
@@ -142,8 +145,15 @@ public struct PopoverRootView: View {
                     .transition(pageTransition)
 
                 case .settings:
-                    SettingsDetailView(store: store, prefs: store.prefs, moduleSettings: moduleSettings, onBack: goBack)
-                        .transition(pageTransition)
+                    SettingsDetailView(
+                        store: store,
+                        prefs: store.prefs,
+                        moduleSettings: moduleSettings,
+                        updateStore: updateStore,
+                        onBack: goBack,
+                        onOpenConsole: { onOpenConsole("dashboard") }
+                    )
+                    .transition(pageTransition)
                 }
             }
             .frame(width: 316)

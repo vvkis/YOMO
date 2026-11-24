@@ -270,9 +270,13 @@ struct OverviewView: View {
                             .simultaneousGesture(
                                 DragGesture(minimumDistance: isEditing ? 5 : 7, coordinateSpace: .named("BentoCanvas"))
                                     .onChanged { value in
-                                        // In normal overview mode, allow direct drag-to-reorder on all tiles except volume slider;
-                                        // resizing is strictly restricted to the dedicated layout-editing mode.
-                                        guard isEditing || tile != .volume else { return }
+                                        // In normal overview mode, allow direct drag-to-reorder on all tiles;
+                                        // on the volume tile, reserve the lower slider region for volume scrubbing
+                                        // and allow dragging from the top header bar (or anywhere in layout-edit mode).
+                                        if !isEditing && tile == .volume {
+                                            let localStartY = value.startLocation.y - rect.minY
+                                            guard localStartY < 26 else { return }
+                                        }
                                         if dragState.draggingTile != tile {
                                             moduleSettings.commitPackedVisualOrder(layout.visualOrder, persist: false)
                                             dragState.draggingTile = tile
@@ -1151,6 +1155,7 @@ struct OverviewView: View {
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .glassBentoCard(cornerRadius: 16)
+        .contentShape(Rectangle())
     }
 
     private func telemetryTile(height: CGFloat, isEditing: Bool) -> some View {
