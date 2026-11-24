@@ -319,7 +319,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keepAwakeStore.setUIActive(true)
         audioBluetoothStore.setUIActive(true)
         clipboardStore.setUIActive(true)
-        duoBarStore.navigate(to: .clipboard)
+
+        var tx = Transaction()
+        tx.disablesAnimations = true
+        withTransaction(tx) {
+            duoBarStore.navigate(to: .clipboard)
+        }
+        panel.contentView?.layoutSubtreeIfNeeded()
 
         if !panel.isEffectivelyVisible {
             button.highlight(true)

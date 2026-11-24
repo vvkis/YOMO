@@ -332,7 +332,7 @@ public final class ClipboardStore: ObservableObject {
     private var ocrToastClearWorkItem: DispatchWorkItem?
     private var copyFeedbackClearWorkItem: DispatchWorkItem?
     private var copyToastHUD: ClipboardCopyToastHUD?
-    private var imagePreviewPanel: ClipboardImagePreviewPanel?
+    private var quickPreviewPanel: ClipboardQuickPreviewPanel?
     private var spaceKeyMonitor: Any?
     private var previewResignObserver: NSObjectProtocol?
     private var previewSessionCount: Int = 0
@@ -416,7 +416,7 @@ public final class ClipboardStore: ObservableObject {
             checkPasteboardNow()
             publishToUI()
         } else {
-            hideImagePreview()
+            hideQuickPreview()
             ocrToastClearWorkItem?.cancel()
             ocrScanningEntryID = nil
             activeOCRResult = nil
@@ -424,7 +424,7 @@ public final class ClipboardStore: ObservableObject {
         }
     }
 
-    // MARK: - Hold Spacebar Image Quick Preview (Zero Idle Cost)
+    // MARK: - Hold Spacebar Image & Text Quick Preview (Zero Idle Cost)
 
     public func beginSpacePreviewSession() {
         previewSessionCount += 1
@@ -443,7 +443,7 @@ public final class ClipboardStore: ObservableObject {
                 queue: .main
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    self?.hideImagePreview()
+                    self?.hideQuickPreview()
                 }
             }
         }
@@ -453,7 +453,7 @@ public final class ClipboardStore: ObservableObject {
         previewSessionCount = max(0, previewSessionCount - 1)
         guard previewSessionCount == 0 else { return }
         hoveredEntry = nil
-        hideImagePreview()
+        hideQuickPreview()
         if let monitor = spaceKeyMonitor {
             NSEvent.removeMonitor(monitor)
             spaceKeyMonitor = nil
@@ -467,11 +467,7 @@ public final class ClipboardStore: ObservableObject {
     public func setHoveredEntry(_ entry: ClipboardEntry) {
         hoveredEntry = entry
         if isSpacePreviewHeld {
-            if entry.kind == .image {
-                showImagePreview(for: entry)
-            } else {
-                hideImagePreview(keepSpaceHeldState: true)
-            }
+            showQuickPreview(for: entry)
         }
     }
 
@@ -479,7 +475,7 @@ public final class ClipboardStore: ObservableObject {
         if hoveredEntry?.id == id {
             hoveredEntry = nil
             if isSpacePreviewHeld {
-                hideImagePreview(keepSpaceHeldState: true)
+                hideQuickPreview(keepSpaceHeldState: true)
             }
         }
     }
@@ -491,7 +487,7 @@ public final class ClipboardStore: ObservableObject {
         }
 
         if event.keyCode == UInt16(kVK_Escape), isSpacePreviewHeld {
-            hideImagePreview()
+            hideQuickPreview()
             return nil
         }
 
@@ -502,18 +498,18 @@ public final class ClipboardStore: ObservableObject {
         switch event.type {
         case .keyDown:
             let hasModifiers = !event.modifierFlags.intersection([.command, .control, .option]).isEmpty
-            guard !hasModifiers, let hovered = hoveredEntry, hovered.kind == .image else {
+            guard !hasModifiers, let hovered = hoveredEntry else {
                 return event
             }
             if !event.isARepeat && !isSpacePreviewHeld {
                 isSpacePreviewHeld = true
-                showImagePreview(for: hovered)
+                showQuickPreview(for: hovered)
             }
             return nil
 
         case .keyUp:
             if isSpacePreviewHeld {
-                hideImagePreview()
+                hideQuickPreview()
                 return nil
             }
             return event
@@ -523,11 +519,9 @@ public final class ClipboardStore: ObservableObject {
         }
     }
 
-    private func showImagePreview(for entry: ClipboardEntry) {
-        guard entry.kind == .image, let fileName = entry.imageFileName else { return }
+    private func showQuickPreview(for entry: ClipboardEntry) {
         previewLoadGeneration &+= 1
         let gen = previewLoadGeneration
-        let fileURL = imagesDirURL.appendingPathComponent(fileName)
         let anchorWindowFrame = NSApp.keyWindow?.frame
         let mouseLoc = NSEvent.mouseLocation
         let targetScreen = NSScreen.screens.first(where: { $0.frame.contains(mouseLoc) })
@@ -536,11 +530,41 @@ public final class ClipboardStore: ObservableObject {
             ?? NSScreen.screens.first
         let scale = targetScreen?.backingScaleFactor ?? 2.0
         let visibleFrame = targetScreen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
-        let maxDisplayW = min(760.0, visibleFrame.width * 0.56)
-        let maxDisplayH = min(660.0, visibleFrame.height * 0.72)
-        let maxPixel = Int(ceil(max(maxDisplayW, maxDisplayH) * scale))
 
-        let caption: String = {
+        switch entry.kind {
+        case .text:
+            guard let rawText = entry.text else { return }
+            let maxPreviewChars = 24_000
+            let displayText: String
+            if rawText.count > maxPreviewChars {
+                displayText = String(rawText.prefix(maxPreviewChars)) + "\n\n…（全文共 \(entry.characterCount) 字，已省略超长尾部）"
+            } else {
+                displayText = rawText
+            }
+            var parts: [String] = ["\(entry.characterCount) 字"]
+            if let app = entry.sourceAppName, !app.isEmpty {
+                parts.append(app)
+            }
+            parts.append("松开空格关闭")
+            let caption = parts.joined(separator: " · ")
+
+            if quickPreviewPanel == nil {
+                quickPreviewPanel = ClipboardQuickPreviewPanel()
+            }
+            quickPreviewPanel?.showText(
+                displayText,
+                caption: caption,
+                anchorWindowFrame: anchorWindowFrame,
+                visibleFrame: visibleFrame
+            )
+
+        case .image:
+            guard let fileName = entry.imageFileName else { return }
+            let fileURL = imagesDirURL.appendingPathComponent(fileName)
+            let maxDisplayW = min(760.0, visibleFrame.width * 0.56)
+            let maxDisplayH = min(660.0, visibleFrame.height * 0.72)
+            let maxPixel = Int(ceil(max(maxDisplayW, maxDisplayH) * scale))
+
             var parts: [String] = []
             if let w = entry.imageWidth, let h = entry.imageHeight, w > 0, h > 0 {
                 parts.append("\(w) × \(h)")
@@ -549,46 +573,46 @@ public final class ClipboardStore: ObservableObject {
                 parts.append(app)
             }
             parts.append("松开空格关闭")
-            return parts.joined(separator: " · ")
-        }()
+            let caption = parts.joined(separator: " · ")
 
-        ioQueue.async { [weak self] in
-            guard let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil) else { return }
-            let opts: [CFString: Any] = [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maxPixel,
-                kCGImageSourceShouldCacheImmediately: true
-            ]
-            guard let cgImg = CGImageSourceCreateThumbnailAtIndex(source, 0, opts as CFDictionary) else { return }
-            let previewImg = NSImage(
-                cgImage: cgImg,
-                size: NSSize(width: CGFloat(cgImg.width) / scale, height: CGFloat(cgImg.height) / scale)
-            )
-            let logicalSize = previewImg.size
-
-            Task { @MainActor [weak self] in
-                guard let self, self.isSpacePreviewHeld, self.previewLoadGeneration == gen else { return }
-                if self.imagePreviewPanel == nil {
-                    self.imagePreviewPanel = ClipboardImagePreviewPanel()
-                }
-                self.imagePreviewPanel?.show(
-                    image: previewImg,
-                    logicalSize: logicalSize,
-                    caption: caption,
-                    anchorWindowFrame: anchorWindowFrame,
-                    visibleFrame: visibleFrame
+            ioQueue.async { [weak self] in
+                guard let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil) else { return }
+                let opts: [CFString: Any] = [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+                    kCGImageSourceShouldCacheImmediately: true
+                ]
+                guard let cgImg = CGImageSourceCreateThumbnailAtIndex(source, 0, opts as CFDictionary) else { return }
+                let previewImg = NSImage(
+                    cgImage: cgImg,
+                    size: NSSize(width: CGFloat(cgImg.width) / scale, height: CGFloat(cgImg.height) / scale)
                 )
+                let logicalSize = previewImg.size
+
+                Task { @MainActor [weak self] in
+                    guard let self, self.isSpacePreviewHeld, self.previewLoadGeneration == gen else { return }
+                    if self.quickPreviewPanel == nil {
+                        self.quickPreviewPanel = ClipboardQuickPreviewPanel()
+                    }
+                    self.quickPreviewPanel?.showImage(
+                        previewImg,
+                        logicalSize: logicalSize,
+                        caption: caption,
+                        anchorWindowFrame: anchorWindowFrame,
+                        visibleFrame: visibleFrame
+                    )
+                }
             }
         }
     }
 
-    private func hideImagePreview(keepSpaceHeldState: Bool = false) {
+    private func hideQuickPreview(keepSpaceHeldState: Bool = false) {
         if !keepSpaceHeldState {
             isSpacePreviewHeld = false
         }
         previewLoadGeneration &+= 1
-        imagePreviewPanel?.hideSmoothly()
+        quickPreviewPanel?.hideSmoothly()
     }
 
     public func openStorageFolder() {
@@ -1542,12 +1566,13 @@ private final class LazyImagePasteboardProvider: NSObject, NSPasteboardItemDataP
     }
 }
 
-/// Non-activating, click-through floating Retina image preview panel triggered while holding Spacebar
-/// over an image entry in Clipboard History. Releases the full-res NSImage immediately when hidden.
+/// Non-activating, click-through floating preview panel triggered while holding Spacebar
+/// over ANY clipboard entry (image OR full text). Immediately frees image/text payload on hide.
 @MainActor
-private final class ClipboardImagePreviewPanel: NSPanel {
+private final class ClipboardQuickPreviewPanel: NSPanel {
     private final class Model: ObservableObject {
         @Published var image: NSImage? = nil
+        @Published var text: String? = nil
         @Published var caption: String = ""
     }
 
@@ -1581,14 +1606,15 @@ private final class ClipboardImagePreviewPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
-    func show(
-        image: NSImage,
+    func showImage(
+        _ image: NSImage,
         logicalSize: NSSize,
         caption: String,
         anchorWindowFrame: NSRect?,
         visibleFrame: NSRect
     ) {
         animationGeneration &+= 1
+        model.text = nil
         model.image = image
         model.caption = caption
 
@@ -1603,6 +1629,47 @@ private final class ClipboardImagePreviewPanel: NSPanel {
         let panelW = min(maxW, drawW + contentPadding * 2)
         let panelH = min(maxH, drawH + contentPadding * 2 + footerHeight)
 
+        presentPanel(width: panelW, height: panelH, anchorWindowFrame: anchorWindowFrame, visibleFrame: visibleFrame)
+    }
+
+    func showText(
+        _ text: String,
+        caption: String,
+        anchorWindowFrame: NSRect?,
+        visibleFrame: NSRect
+    ) {
+        animationGeneration &+= 1
+        model.image = nil
+        model.text = text
+        model.caption = caption
+
+        let maxW = min(540.0, visibleFrame.width * 0.44)
+        let maxH = min(560.0, visibleFrame.height * 0.68)
+        let charCount = text.count
+        let panelW: CGFloat = charCount < 80 ? 340 : (charCount < 300 ? 430 : maxW)
+
+        // Measure actual wrapped text height using AppKit NSString boundingRect for snug fit
+        let textInsetX: CGFloat = contentPadding * 2 + 24
+        let font = NSFont.systemFont(ofSize: 12.5, weight: .regular)
+        let para = NSMutableParagraphStyle()
+        para.lineSpacing = 3.5
+        let measured = (text as NSString).boundingRect(
+            with: NSSize(width: panelW - textInsetX, height: maxH),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font, .paragraphStyle: para]
+        )
+        let neededH = ceil(measured.height) + contentPadding * 2 + 24 + footerHeight
+        let panelH = min(maxH, max(126.0, neededH))
+
+        presentPanel(width: panelW, height: panelH, anchorWindowFrame: anchorWindowFrame, visibleFrame: visibleFrame)
+    }
+
+    private func presentPanel(
+        width panelW: CGFloat,
+        height panelH: CGFloat,
+        anchorWindowFrame: NSRect?,
+        visibleFrame: NSRect
+    ) {
         // Position neatly beside the clipboard popover/window so it never blocks the hover list
         let gap: CGFloat = 14
         let originX: CGFloat
@@ -1647,6 +1714,7 @@ private final class ClipboardImagePreviewPanel: NSPanel {
         let gen = animationGeneration
         guard isVisible else {
             model.image = nil
+            model.text = nil
             return
         }
         NSAnimationContext.runAnimationGroup({ ctx in
@@ -1659,6 +1727,7 @@ private final class ClipboardImagePreviewPanel: NSPanel {
                 self.orderOut(nil)
                 self.alphaValue = 1.0
                 self.model.image = nil
+                self.model.text = nil
             }
         })
     }
@@ -1670,20 +1739,36 @@ private final class ClipboardImagePreviewPanel: NSPanel {
 
         var body: some View {
             VStack(spacing: 0) {
-                ZStack {
-                    if let img = model.image {
+                if let img = model.image {
+                    ZStack {
                         Image(nsImage: img)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.top, padding)
+                    .padding(.horizontal, padding)
+                } else if let text = model.text {
+                    ScrollView(.vertical, showsIndicators: true) {
+                        Text(text)
+                            .font(.system(size: 12.5))
+                            .lineSpacing(3.5)
+                            .foregroundStyle(.white.opacity(0.94))
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .padding(12)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.white.opacity(0.06))
+                    )
+                    .padding(.top, padding)
+                    .padding(.horizontal, padding)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.top, padding)
-                .padding(.horizontal, padding)
 
                 HStack(spacing: 6) {
-                    Image(systemName: "eye.fill")
+                    Image(systemName: model.image != nil ? "photo" : "doc.text")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.72))
                     Text(model.caption)

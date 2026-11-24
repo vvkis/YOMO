@@ -211,7 +211,7 @@ public struct ClipboardPopoverView: View {
 
             // 5. Footer
             HStack {
-                Text("按住空格预览图 · 共 \(store.totalCount) 条 · ⇧⌘V")
+                Text("按住空格预览 · 共 \(store.totalCount) 条 · ⇧⌘V")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -315,7 +315,7 @@ private struct ClipboardEntryRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(entry.kind == .image ? "点击即复制 · 悬停按住空格可预览大图" : "点击即可复制到剪贴板")
+            .help("点击即复制 · 悬停按住空格可预览全部内容")
 
             // Quick Copy feedback / OCR (for images) / Pin & Delete actions
             HStack(spacing: 4) {

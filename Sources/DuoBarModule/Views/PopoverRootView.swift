@@ -173,7 +173,6 @@ public struct PopoverRootView: View {
             )
             .padding(.top, 6)
             .padding(.horizontal, 20)
-            .animation(.spring(response: 0.34, dampingFraction: 0.88), value: store.currentPage)
             .animation(.spring(response: 0.30, dampingFraction: 0.88), value: store.showOtherNetworks)
         }
         .frame(minWidth: 356, maxWidth: 356, maxHeight: .infinity, alignment: .top)
