@@ -123,27 +123,37 @@ private final class MonitorPanelBridge {
         }
     }
 
+    private func safeValue(on obj: NSObject?, forKey key: String) -> Any? {
+        guard let obj, obj.responds(to: NSSelectorFromString(key)) else { return nil }
+        return obj.value(forKey: key)
+    }
+
     func fetchDisplaysByID() -> [CGDirectDisplayID: NSObject] {
         guard isLoaded,
               let mgrClass = NSClassFromString("MPDisplayMgr") as? NSObject.Type else {
             return [:]
         }
         let mgr = mgrClass.init()
-        guard let list = mgr.value(forKey: "displays") as? [NSObject] else {
+        guard let list = safeValue(on: mgr, forKey: "displays") as? [NSObject] else {
             return [:]
         }
         var map: [CGDirectDisplayID: NSObject] = [:]
         for disp in list {
-            if let num = disp.value(forKey: "displayID") as? NSNumber {
+            if let num = safeValue(on: disp, forKey: "displayID") as? NSNumber {
                 map[CGDirectDisplayID(num.uint32Value)] = disp
             }
         }
         return map
     }
 
+    func safeRead(_ obj: NSObject?, key: String) -> Any? {
+        safeValue(on: obj, forKey: key)
+    }
+
     func setModeNumber(_ modeNumber: Int32, on mpDisplay: NSObject) -> Int32 {
         let sel = NSSelectorFromString("setModeNumber:")
-        guard let cls: AnyClass = object_getClass(mpDisplay),
+        guard mpDisplay.responds(to: sel),
+              let cls: AnyClass = object_getClass(mpDisplay),
               let imp = class_getMethodImplementation(cls, sel) else {
             return -1
         }
@@ -264,7 +274,7 @@ public final class DisplayHiDPIStore: ObservableObject {
             }?.localizedName ?? (isBuiltin ? "内建显示器" : "外接显示器 #\(i + 1)")
 
             if let mpDisp = mpMap[did],
-               let rawModes = mpDisp.value(forKey: "allModes") as? [NSObject],
+               let rawModes = MonitorPanelBridge.shared.safeRead(mpDisp, key: "allModes") as? [NSObject],
                !rawModes.isEmpty {
                 let info = buildDisplayInfoFromMonitorPanel(
                     did: did,
@@ -314,34 +324,35 @@ public final class DisplayHiDPIStore: ObservableObject {
         mpDisplay: NSObject,
         rawModes: [NSObject]
     ) -> DisplayDeviceInfo {
-        let curObj = mpDisplay.value(forKey: "currentMode") as? NSObject
-        let natObj = mpDisplay.value(forKey: "nativeMode") as? NSObject
+        let bridge = MonitorPanelBridge.shared
+        let curObj = bridge.safeRead(mpDisplay, key: "currentMode") as? NSObject
+        let natObj = bridge.safeRead(mpDisplay, key: "nativeMode") as? NSObject
 
-        let curW = (curObj?.value(forKey: "width") as? Int) ?? CGDisplayPixelsWide(did)
-        let curH = (curObj?.value(forKey: "height") as? Int) ?? CGDisplayPixelsHigh(did)
-        let curPW = (curObj?.value(forKey: "pixelsWide") as? Int) ?? curW
-        let curPH = (curObj?.value(forKey: "pixelsHigh") as? Int) ?? curH
-        let curHz = (curObj?.value(forKey: "refreshRate") as? Int) ?? 0
-        let curHi = (curObj?.value(forKey: "isHiDPI") as? Bool) ?? (curPW > curW)
-        let curNum = (curObj?.value(forKey: "modeNumber") as? NSNumber)?.int32Value
+        let curW = (bridge.safeRead(curObj, key: "width") as? Int) ?? CGDisplayPixelsWide(did)
+        let curH = (bridge.safeRead(curObj, key: "height") as? Int) ?? CGDisplayPixelsHigh(did)
+        let curPW = (bridge.safeRead(curObj, key: "pixelsWide") as? Int) ?? curW
+        let curPH = (bridge.safeRead(curObj, key: "pixelsHigh") as? Int) ?? curH
+        let curHz = (bridge.safeRead(curObj, key: "refreshRate") as? Int) ?? 0
+        let curHi = (bridge.safeRead(curObj, key: "isHiDPI") as? Bool) ?? (curPW > curW)
+        let curNum = (bridge.safeRead(curObj, key: "modeNumber") as? NSNumber)?.int32Value
 
-        let nativeW = (natObj?.value(forKey: "pixelsWide") as? Int) ?? curPW
-        let nativeH = (natObj?.value(forKey: "pixelsHigh") as? Int) ?? curPH
+        let nativeW = (bridge.safeRead(natObj, key: "pixelsWide") as? Int) ?? curPW
+        let nativeH = (bridge.safeRead(natObj, key: "pixelsHigh") as? Int) ?? curPH
 
         var allOptions: [DisplayModeOption] = []
         allOptions.reserveCapacity(rawModes.count)
 
         for m in rawModes {
-            let w = (m.value(forKey: "width") as? Int) ?? 0
-            let h = (m.value(forKey: "height") as? Int) ?? 0
-            let pw = (m.value(forKey: "pixelsWide") as? Int) ?? w
-            let ph = (m.value(forKey: "pixelsHigh") as? Int) ?? h
-            let hz = (m.value(forKey: "refreshRate") as? Int) ?? 0
-            let hi = (m.value(forKey: "isHiDPI") as? Bool) ?? (pw > w)
-            let isDef = (m.value(forKey: "isDefaultMode") as? Bool) ?? false
-            let isNat = (m.value(forKey: "isNativeMode") as? Bool) ?? false
-            let isTV = (m.value(forKey: "isTVMode") as? Bool) ?? false
-            let modeNum = (m.value(forKey: "modeNumber") as? NSNumber)?.int32Value ?? -1
+            let w = (bridge.safeRead(m, key: "width") as? Int) ?? 0
+            let h = (bridge.safeRead(m, key: "height") as? Int) ?? 0
+            let pw = (bridge.safeRead(m, key: "pixelsWide") as? Int) ?? w
+            let ph = (bridge.safeRead(m, key: "pixelsHigh") as? Int) ?? h
+            let hz = (bridge.safeRead(m, key: "refreshRate") as? Int) ?? 0
+            let hi = (bridge.safeRead(m, key: "isHiDPI") as? Bool) ?? (pw > w)
+            let isDef = (bridge.safeRead(m, key: "isDefaultMode") as? Bool) ?? false
+            let isNat = (bridge.safeRead(m, key: "isNativeMode") as? Bool) ?? false
+            let isTV = (bridge.safeRead(m, key: "isTVMode") as? Bool) ?? false
+            let modeNum = (bridge.safeRead(m, key: "modeNumber") as? NSNumber)?.int32Value ?? -1
 
             guard w >= 640, h >= 480, modeNum >= 0 else { continue }
             let isCur: Bool
@@ -616,7 +627,11 @@ public final class DisplayHiDPIStore: ObservableObject {
             guard let self else { return }
 
             // Preferred path: MonitorPanel.framework setModeNumber:
-            if let mpDisp = self.mpDisplaysByID[displayID], option.cgModeIndex == nil {
+            if option.cgModeIndex == nil {
+                guard let mpDisp = self.mpDisplaysByID[displayID] else {
+                    self.statusMessage = "未找到目标显示器，无法切换"
+                    return
+                }
                 let rc = MonitorPanelBridge.shared.setModeNumber(option.modeNumber, on: mpDisp)
                 if rc == 0 {
                     if let pendingRollback {

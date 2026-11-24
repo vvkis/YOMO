@@ -181,7 +181,7 @@ public struct ScrollReverserConsoleView: View {
             ConsoleCard {
                 ConsoleRow(
                     title: "开启鼠标滚轮翻转",
-                    subtitle: store.statusSubtitle
+                    subtitle: store.statusMessage ?? store.statusSubtitle
                 ) {
                     ConsoleSwitch(
                         isOn: Binding(

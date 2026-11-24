@@ -54,7 +54,10 @@ private final class ScrollEventTapEngine {
             return false
         }
 
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            CFMachPortInvalidate(tap)
+            return false
+        }
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
 
@@ -218,7 +221,7 @@ public final class ScrollReverserStore: ObservableObject {
         if trusted {
             if desiredEnabled && moduleEnabled && !isActive {
                 _ = startTapInternal()
-            } else if isActive {
+            } else if statusMessage != nil {
                 statusMessage = nil
             }
         } else if isActive {
@@ -282,10 +285,17 @@ public final class ScrollReverserStore: ObservableObject {
 
     public var statusSubtitle: String {
         if isActive {
-            if mouseOnly {
-                return reverseHorizontal ? "已开启 · 鼠标垂直+水平" : "已开启 · 仅鼠标滚轮"
+            let scope = mouseOnly ? "鼠标" : "全局"
+            switch (reverseVertical, reverseHorizontal) {
+            case (true, true):
+                return "已开启 · \(scope)垂直+水平"
+            case (true, false):
+                return mouseOnly ? "已开启 · 仅鼠标滚轮" : "已开启 · 全局垂直"
+            case (false, true):
+                return "已开启 · \(scope)仅水平"
+            case (false, false):
+                return "已开启 · 未勾选方向"
             }
-            return reverseHorizontal ? "已开启 · 全局垂直+水平" : "已开启 · 全局垂直"
         }
         if !hasAccessibilityPermission && desiredEnabled {
             return "等待辅助功能授权"

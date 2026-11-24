@@ -90,6 +90,10 @@ public final class AudioBluetoothStore: ObservableObject {
     private var btNotificationHub: BluetoothNotificationHub?
     private var pendingBluetoothRefresh: Bool = false
     private var lastBluetoothRefreshTime: TimeInterval = 0
+    private var isUIActive: Bool = false
+    private var audioDirtyWhileHidden: Bool = false
+    private var volumeDirtyWhileHidden: Bool = false
+    private var bluetoothDirtyWhileHidden: Bool = false
 
     public init() {
         refreshAudioDevices()
@@ -98,16 +102,47 @@ public final class AudioBluetoothStore: ObservableObject {
         setupBluetoothNotifications()
     }
 
+    public func setUIActive(_ active: Bool) {
+        guard isUIActive != active else { return }
+        isUIActive = active
+        if active {
+            if audioDirtyWhileHidden {
+                audioDirtyWhileHidden = false
+                volumeDirtyWhileHidden = false
+                refreshAudioDevices()
+            } else if volumeDirtyWhileHidden {
+                volumeDirtyWhileHidden = false
+                syncVolumeFromHardware()
+            }
+            if bluetoothDirtyWhileHidden {
+                bluetoothDirtyWhileHidden = false
+                refreshBluetoothDevices(force: true)
+            }
+        }
+    }
+
     private func setupCoreAudioListeners() {
         let hub = CoreAudioListenerHub(
             onRouteChanged: { [weak self] in
                 Task { @MainActor [weak self] in
-                    self?.refreshAudioDevices()
+                    guard let self else { return }
+                    if self.isUIActive {
+                        self.refreshAudioDevices()
+                    } else {
+                        self.audioDirtyWhileHidden = true
+                        let defaultOut = self.getDefaultAudioDevice(scope: kAudioHardwarePropertyDefaultOutputDevice)
+                        self.listenerHub?.observeOutputDevice(defaultOut)
+                    }
                 }
             },
             onVolumeChanged: { [weak self] in
                 Task { @MainActor [weak self] in
-                    self?.syncVolumeFromHardware()
+                    guard let self else { return }
+                    if self.isUIActive {
+                        self.syncVolumeFromHardware()
+                    } else {
+                        self.volumeDirtyWhileHidden = true
+                    }
                 }
             }
         )
@@ -120,8 +155,13 @@ public final class AudioBluetoothStore: ObservableObject {
         btNotificationHub = BluetoothNotificationHub { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.refreshAudioDevices()
-                self.refreshBluetoothDevices(force: true)
+                if self.isUIActive {
+                    self.refreshAudioDevices()
+                    self.refreshBluetoothDevices(force: true)
+                } else {
+                    self.audioDirtyWhileHidden = true
+                    self.bluetoothDirtyWhileHidden = true
+                }
             }
         }
     }
@@ -231,24 +271,39 @@ public final class AudioBluetoothStore: ObservableObject {
             }
         }
 
-        outputDevices = outs
-        inputDevices = ins
+        if outputDevices != outs {
+            outputDevices = outs
+        }
+        if inputDevices != ins {
+            inputDevices = ins
+        }
 
         if defaultOut != 0 {
-            outputVolume = getVolume(for: defaultOut)
-            isMuted = getMute(for: defaultOut)
+            let vol = getVolume(for: defaultOut)
+            let muted = getMute(for: defaultOut)
+            if abs(outputVolume - vol) > 0.002 {
+                outputVolume = vol
+            }
+            if isMuted != muted {
+                isMuted = muted
+            }
         }
         listenerHub?.observeOutputDevice(defaultOut)
     }
 
     public func selectOutputDevice(_ device: AudioDeviceInfo) {
-        setDefaultAudioDevice(device.id, selector: kAudioHardwarePropertyDefaultOutputDevice)
-        statusMessage = nil
+        let ok = setDefaultAudioDevice(device.id, selector: kAudioHardwarePropertyDefaultOutputDevice)
+        statusMessage = ok ? nil : "切换输出设备「\(device.name)」失败"
         refreshAudioDevices()
     }
 
     public func selectInputDevice(_ device: AudioDeviceInfo) {
-        setDefaultAudioDevice(device.id, selector: kAudioHardwarePropertyDefaultInputDevice)
+        let ok = setDefaultAudioDevice(device.id, selector: kAudioHardwarePropertyDefaultInputDevice)
+        guard ok else {
+            statusMessage = "切换输入设备「\(device.name)」失败"
+            refreshAudioDevices()
+            return
+        }
         if device.isContinuity {
             statusMessage = "已切换默认输入为「\(device.name)」；连续互通麦克风会在录音/通话启动时自动唤醒 iPhone"
         } else {
@@ -259,44 +314,59 @@ public final class AudioBluetoothStore: ObservableObject {
 
     public func switchToBuiltinMic() {
         if let mic = builtinInputDevice {
-            selectInputDevice(mic)
-            statusMessage = "已切换至内建麦克风以保持蓝牙高清音质"
+            let ok = setDefaultAudioDevice(mic.id, selector: kAudioHardwarePropertyDefaultInputDevice)
+            statusMessage = ok ? "已切换至内建麦克风以保持蓝牙高清音质" : "切换至内建麦克风失败"
+            refreshAudioDevices()
         }
     }
 
     public func setOutputVolume(_ value: Float) {
         let clamped = min(1.0, max(0.0, value))
-        outputVolume = clamped
         let defaultOut = getDefaultAudioDevice(scope: kAudioHardwarePropertyDefaultOutputDevice)
         guard defaultOut != 0 else { return }
 
         var vol = Float32(clamped)
+        var didSet = false
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
             mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
         if AudioObjectHasProperty(defaultOut, &addr) {
-            AudioObjectSetPropertyData(defaultOut, &addr, 0, nil, UInt32(MemoryLayout<Float32>.size), &vol)
-        } else {
+            var settable: DarwinBoolean = false
+            if AudioObjectIsPropertySettable(defaultOut, &addr, &settable) == noErr,
+               settable.boolValue,
+               AudioObjectSetPropertyData(defaultOut, &addr, 0, nil, UInt32(MemoryLayout<Float32>.size), &vol) == noErr {
+                didSet = true
+            }
+        }
+        if !didSet {
             for elem: AudioObjectPropertyElement in [0, 1, 2] {
                 var scalarAddr = AudioObjectPropertyAddress(
                     mSelector: kAudioDevicePropertyVolumeScalar,
                     mScope: kAudioDevicePropertyScopeOutput,
                     mElement: elem
                 )
-                if AudioObjectHasProperty(defaultOut, &scalarAddr) {
-                    AudioObjectSetPropertyData(defaultOut, &scalarAddr, 0, nil, UInt32(MemoryLayout<Float32>.size), &vol)
+                var settable: DarwinBoolean = false
+                if AudioObjectHasProperty(defaultOut, &scalarAddr),
+                   AudioObjectIsPropertySettable(defaultOut, &scalarAddr, &settable) == noErr,
+                   settable.boolValue,
+                   AudioObjectSetPropertyData(defaultOut, &scalarAddr, 0, nil, UInt32(MemoryLayout<Float32>.size), &vol) == noErr {
+                    didSet = true
                 }
             }
         }
-        if clamped > 0.01 && isMuted {
-            setOutputMute(false)
+        if didSet {
+            outputVolume = clamped
+            if clamped > 0.01 && isMuted {
+                setOutputMute(false)
+            }
+        } else {
+            syncVolumeFromHardware()
         }
     }
 
     public func setOutputMute(_ mute: Bool) {
-        isMuted = mute
         let defaultOut = getDefaultAudioDevice(scope: kAudioHardwarePropertyDefaultOutputDevice)
         guard defaultOut != 0 else { return }
 
@@ -306,8 +376,14 @@ public final class AudioBluetoothStore: ObservableObject {
             mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
-        if AudioObjectHasProperty(defaultOut, &addr) {
-            AudioObjectSetPropertyData(defaultOut, &addr, 0, nil, UInt32(MemoryLayout<UInt32>.size), &val)
+        var settable: DarwinBoolean = false
+        if AudioObjectHasProperty(defaultOut, &addr),
+           AudioObjectIsPropertySettable(defaultOut, &addr, &settable) == noErr,
+           settable.boolValue,
+           AudioObjectSetPropertyData(defaultOut, &addr, 0, nil, UInt32(MemoryLayout<UInt32>.size), &val) == noErr {
+            isMuted = mute
+        } else {
+            syncVolumeFromHardware()
         }
     }
 
@@ -332,8 +408,12 @@ public final class AudioBluetoothStore: ObservableObject {
                 guard let self else { return }
                 self.isRefreshingBluetooth = false
                 self.lastBluetoothRefreshTime = Date().timeIntervalSinceReferenceDate
-                self.bluetoothPoweredOn = parsed.poweredOn
-                self.bluetoothDevices = parsed.devices
+                if self.bluetoothPoweredOn != parsed.poweredOn {
+                    self.bluetoothPoweredOn = parsed.poweredOn
+                }
+                if self.bluetoothDevices != parsed.devices {
+                    self.bluetoothDevices = parsed.devices
+                }
 
                 if self.pendingBluetoothRefresh {
                     self.pendingBluetoothRefresh = false
@@ -395,14 +475,15 @@ public final class AudioBluetoothStore: ObservableObject {
         return devID
     }
 
-    private func setDefaultAudioDevice(_ deviceID: AudioDeviceID, selector: AudioObjectPropertySelector) {
+    @discardableResult
+    private func setDefaultAudioDevice(_ deviceID: AudioDeviceID, selector: AudioObjectPropertySelector) -> Bool {
         var devID = deviceID
         var addr = AudioObjectPropertyAddress(
             mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        AudioObjectSetPropertyData(
+        let rc = AudioObjectSetPropertyData(
             AudioObjectID(kAudioObjectSystemObject),
             &addr,
             0,
@@ -410,6 +491,7 @@ public final class AudioBluetoothStore: ObservableObject {
             UInt32(MemoryLayout<AudioDeviceID>.size),
             &devID
         )
+        return rc == noErr
     }
 
     private func getAudioDeviceName(_ devID: AudioDeviceID) -> String? {
@@ -452,12 +534,12 @@ public final class AudioBluetoothStore: ObservableObject {
 
     private func getVolume(for devID: AudioDeviceID) -> Float {
         var vol: Float32 = 0.5
-        var size = UInt32(MemoryLayout<Float32>.size)
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
             mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
+        var size = UInt32(MemoryLayout<Float32>.size)
         if AudioObjectHasProperty(devID, &addr),
            AudioObjectGetPropertyData(devID, &addr, 0, nil, &size, &vol) == noErr {
             return Float(vol)
@@ -468,6 +550,7 @@ public final class AudioBluetoothStore: ObservableObject {
                 mScope: kAudioDevicePropertyScopeOutput,
                 mElement: elem
             )
+            size = UInt32(MemoryLayout<Float32>.size)
             if AudioObjectHasProperty(devID, &scalarAddr),
                AudioObjectGetPropertyData(devID, &scalarAddr, 0, nil, &size, &vol) == noErr {
                 return Float(vol)
@@ -654,7 +737,7 @@ public final class AudioBluetoothStore: ObservableObject {
 private final class BluetoothNotificationHub: NSObject {
     private let onConnectionChanged: @Sendable () -> Void
     private var connectNotif: IOBluetoothUserNotification?
-    private var observedDisconnectNotifs: [IOBluetoothUserNotification] = []
+    private var observedDisconnectNotifs: [String: IOBluetoothUserNotification] = [:]
 
     init(onConnectionChanged: @escaping @Sendable () -> Void) {
         self.onConnectionChanged = onConnectionChanged
@@ -666,22 +749,35 @@ private final class BluetoothNotificationHub: NSObject {
     }
 
     @objc private func handleDeviceConnected(_ notification: IOBluetoothUserNotification?, device: IOBluetoothDevice?) {
-        if let device,
-           let disc = device.register(forDisconnectNotification: self, selector: #selector(handleDeviceDisconnected(_:device:))) {
-            observedDisconnectNotifs.append(disc)
+        if let device, let rawAddr = device.addressString {
+            let key = rawAddr.lowercased().replacingOccurrences(of: "-", with: ":").trimmingCharacters(in: .whitespacesAndNewlines)
+            if let existing = observedDisconnectNotifs.removeValue(forKey: key) {
+                existing.unregister()
+            }
+            if let disc = device.register(forDisconnectNotification: self, selector: #selector(handleDeviceDisconnected(_:device:))) {
+                observedDisconnectNotifs[key] = disc
+            }
         }
         onConnectionChanged()
     }
 
     @objc private func handleDeviceDisconnected(_ notification: IOBluetoothUserNotification?, device: IOBluetoothDevice?) {
+        notification?.unregister()
+        if let rawAddr = device?.addressString {
+            let key = rawAddr.lowercased().replacingOccurrences(of: "-", with: ":").trimmingCharacters(in: .whitespacesAndNewlines)
+            if let existing = observedDisconnectNotifs.removeValue(forKey: key), existing !== notification {
+                existing.unregister()
+            }
+        }
         onConnectionChanged()
     }
 
     deinit {
         connectNotif?.unregister()
-        for n in observedDisconnectNotifs {
+        for n in observedDisconnectNotifs.values {
             n.unregister()
         }
+        observedDisconnectNotifs.removeAll()
     }
 }
 

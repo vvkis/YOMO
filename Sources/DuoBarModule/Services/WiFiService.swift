@@ -15,6 +15,9 @@ final class WiFiService: NSObject, CLLocationManagerDelegate, CWEventDelegate, @
     override init() {
         super.init()
         locationManager.delegate = self
+    }
+
+    func startMonitoring() {
         client.delegate = self
         for type: CWEventType in [.powerDidChange, .ssidDidChange, .linkDidChange] {
             try? client.startMonitoringEvent(with: type)
@@ -64,6 +67,8 @@ final class WiFiService: NSObject, CLLocationManagerDelegate, CWEventDelegate, @
             state.rssi = 0
             state.transmitRateMbps = 0
             state.channelBandLabel = nil
+            state.knownNetworks = []
+            state.nearbyNetworks = []
             return state
         }
 
@@ -77,6 +82,8 @@ final class WiFiService: NSObject, CLLocationManagerDelegate, CWEventDelegate, @
             state.rssi = 0
             state.transmitRateMbps = 0
             state.channelBandLabel = nil
+            state.knownNetworks = []
+            state.nearbyNetworks = []
             return state
         }
 
@@ -87,9 +94,10 @@ final class WiFiService: NSObject, CLLocationManagerDelegate, CWEventDelegate, @
         state.rssi = rssi
         state.transmitRateMbps = txRate
         state.currentSSID = ssid
-        let band = iface.wlanChannel()?.channelBand
+        let wlanChannel = iface.wlanChannel()
+        let band = wlanChannel?.channelBand
         state.channelBandLabel = Self.fullBandLabel(band)
-        state.isConnected = (ssid != nil) || (rssi != 0 && txRate > 0) || iface.serviceActive()
+        state.isConnected = (ssid != nil) || (rssi != 0 && txRate > 0) || (wlanChannel != nil && iface.interfaceMode() != .none)
 
         if let ssid, state.knownNetworks.isEmpty {
             state.knownNetworks = [
@@ -239,10 +247,11 @@ final class WiFiService: NSObject, CLLocationManagerDelegate, CWEventDelegate, @
                 return
             }
             let arg = on ? "on" : "off"
-            let out = Self.runCommand("/usr/sbin/networksetup", args: ["-setairportpower", targetIface, arg])
-            let ok = !out.lowercased().contains("error")
+            let res = Self.runCommand("/usr/sbin/networksetup", args: ["-setairportpower", targetIface, arg])
+            let trimmed = res.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let ok = res.succeeded && !trimmed.lowercased().contains("error")
             DispatchQueue.main.async {
-                completion(ok, ok ? nil : out.trimmingCharacters(in: .whitespacesAndNewlines))
+                completion(ok, ok ? nil : (trimmed.isEmpty ? "切换 Wi-Fi 电源失败" : trimmed))
             }
         }
     }
@@ -255,11 +264,11 @@ final class WiFiService: NSObject, CLLocationManagerDelegate, CWEventDelegate, @
                 return
             }
             // Known network credentials are retrieved by macOS from System Keychain
-            let out = Self.runCommand("/usr/sbin/networksetup", args: ["-setairportnetwork", targetIface, ssid])
-            let trimmed = out.trimmingCharacters(in: .whitespacesAndNewlines)
-            let ok = trimmed.isEmpty
+            let res = Self.runCommand("/usr/sbin/networksetup", args: ["-setairportnetwork", targetIface, ssid])
+            let trimmed = res.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let ok = res.succeeded && trimmed.isEmpty
             DispatchQueue.main.async {
-                completion(ok, ok ? nil : trimmed)
+                completion(ok, ok ? nil : (trimmed.isEmpty ? "连接「\(ssid)」失败" : trimmed))
             }
         }
     }
@@ -323,7 +332,7 @@ final class WiFiService: NSObject, CLLocationManagerDelegate, CWEventDelegate, @
         }
     }
 
-    private static func runCommand(_ path: String, args: [String]) -> String {
+    private static func runCommand(_ path: String, args: [String]) -> (succeeded: Bool, output: String) {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: path)
         proc.arguments = args
@@ -334,9 +343,9 @@ final class WiFiService: NSObject, CLLocationManagerDelegate, CWEventDelegate, @
             try proc.run()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             proc.waitUntilExit()
-            return String(data: data, encoding: .utf8) ?? ""
+            return (proc.terminationStatus == 0, String(data: data, encoding: .utf8) ?? "")
         } catch {
-            return ""
+            return (false, error.localizedDescription)
         }
     }
 }

@@ -183,6 +183,14 @@ public struct DisplayHiDPIPopoverView: View {
                 }
             }
 
+            if let msg = store.statusMessage, !msg.isEmpty {
+                Text(msg)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .padding(.horizontal, 4)
+            }
+
             HStack {
                 Button("高级控制台…") {
                     onOpenConsole()

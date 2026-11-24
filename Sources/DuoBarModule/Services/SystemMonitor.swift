@@ -5,8 +5,11 @@ import SystemConfiguration
 
 final class SystemMonitor: @unchecked Sendable {
     private let stateLock = NSLock()
+    private let hostPort: mach_port_t
+    private let cachedPageSize: vm_size_t
     private var prevCPUTicks: host_cpu_load_info?
     private var prevNetBytes: (iface: String, rx: UInt64, tx: UInt64, time: TimeInterval)?
+    private var lastNetSpeed: (iface: String, down: Double, up: Double)?
     private var cachedRouteInfo: (ip: String, iface: String, connected: Bool, time: TimeInterval)?
     private var cpuHistory: [Double] = Array(repeating: 0, count: 24)
     private let dynamicStore: SCDynamicStore?
@@ -14,10 +17,19 @@ final class SystemMonitor: @unchecked Sendable {
     private let processLock = NSLock()
     private var prevProcCPUNs: [pid_t: UInt64] = [:]
     private var prevProcSampleTime: TimeInterval?
+    private var processSamplerGeneration: UInt64 = 0
     private let machTimebaseNumer: UInt64
     private let machTimebaseDenom: UInt64
 
     init() {
+        let port = mach_host_self()
+        self.hostPort = port
+        var ps: vm_size_t = 0
+        if host_page_size(port, &ps) != KERN_SUCCESS || ps == 0 {
+            ps = vm_kernel_page_size
+        }
+        self.cachedPageSize = ps
+
         var info = mach_timebase_info_data_t(numer: 1, denom: 1)
         mach_timebase_info(&info)
         self.machTimebaseNumer = UInt64(max(1, info.numer))
@@ -25,12 +37,18 @@ final class SystemMonitor: @unchecked Sendable {
         self.dynamicStore = SCDynamicStoreCreate(nil, "YOMO.Network" as CFString, nil, nil)
     }
 
+    deinit {
+        if hostPort != MACH_PORT_NULL {
+            mach_port_deallocate(mach_task_self_, hostPort)
+        }
+    }
+
     func sampleCPU() -> CPUStats {
         var size = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size)
         var info = host_cpu_load_info()
         let result = withUnsafeMutablePointer(to: &info) { ptr in
             ptr.withMemoryRebound(to: integer_t.self, capacity: Int(size)) { intPtr in
-                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, intPtr, &size)
+                host_statistics(hostPort, HOST_CPU_LOAD_INFO, intPtr, &size)
             }
         }
 
@@ -82,7 +100,7 @@ final class SystemMonitor: @unchecked Sendable {
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
         let kr = withUnsafeMutablePointer(to: &vmStats) { ptr in
             ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, intPtr, &count)
+                host_statistics64(hostPort, HOST_VM_INFO64, intPtr, &count)
             }
         }
 
@@ -90,9 +108,7 @@ final class SystemMonitor: @unchecked Sendable {
             return MemoryStats(totalGB: totalGB)
         }
 
-        var pageSize: vm_size_t = 0
-        host_page_size(mach_host_self(), &pageSize)
-        let ps = Double(pageSize)
+        let ps = Double(cachedPageSize)
 
         let appPages = max(0.0, Double(vmStats.internal_page_count) - Double(vmStats.purgeable_count))
         let wiredPages = Double(vmStats.wire_count)
@@ -165,7 +181,7 @@ final class SystemMonitor: @unchecked Sendable {
     /// while caching the primary interface & IPv4 lookup (`SCDynamicStore` + `getifaddrs`)
     /// so background ticks don't repeatedly walk `getifaddrs`.
     func sampleNetwork(forceRouteRefresh: Bool = false) -> NetworkStats {
-        let now = Date().timeIntervalSinceReferenceDate
+        let now = ProcessInfo.processInfo.systemUptime
 
         stateLock.lock()
         let cached = cachedRouteInfo
@@ -192,22 +208,34 @@ final class SystemMonitor: @unchecked Sendable {
             stateLock.unlock()
         }
 
-        let (totalRx, totalTx) = read64BitInterfaceBytes(targetInterface: targetIface)
+        let counters = read64BitInterfaceBytes(targetInterface: targetIface)
 
         var downSpeed = 0.0
         var upSpeed = 0.0
 
         stateLock.lock()
-        if let prev = prevNetBytes, prev.iface == targetIface {
-            let dt = now - prev.time
-            if dt > 0.1 {
-                let dRx = totalRx >= prev.rx ? Double(totalRx - prev.rx) : 0
-                let dTx = totalTx >= prev.tx ? Double(totalTx - prev.tx) : 0
-                downSpeed = dRx / dt
-                upSpeed = dTx / dt
+        if let (totalRx, totalTx) = counters {
+            if let prev = prevNetBytes, prev.iface == targetIface {
+                let dt = now - prev.time
+                if dt > 0.1 {
+                    let dRx = totalRx >= prev.rx ? Double(totalRx - prev.rx) : 0
+                    let dTx = totalTx >= prev.tx ? Double(totalTx - prev.tx) : 0
+                    downSpeed = dRx / dt
+                    upSpeed = dTx / dt
+                    prevNetBytes = (targetIface, totalRx, totalTx, now)
+                    lastNetSpeed = (targetIface, downSpeed, upSpeed)
+                } else if let last = lastNetSpeed, last.iface == targetIface {
+                    downSpeed = last.down
+                    upSpeed = last.up
+                }
+            } else {
+                prevNetBytes = (targetIface, totalRx, totalTx, now)
+                lastNetSpeed = (targetIface, 0.0, 0.0)
             }
+        } else if let last = lastNetSpeed, last.iface == targetIface {
+            downSpeed = last.down
+            upSpeed = last.up
         }
-        prevNetBytes = (targetIface, totalRx, totalTx, now)
         stateLock.unlock()
 
         return NetworkStats(
@@ -236,33 +264,35 @@ final class SystemMonitor: @unchecked Sendable {
         return ""
     }
 
-    private func read64BitInterfaceBytes(targetInterface: String) -> (rx: UInt64, tx: UInt64) {
+    private func read64BitInterfaceBytes(targetInterface: String) -> (rx: UInt64, tx: UInt64)? {
         var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
         var len: Int = 0
         guard sysctl(&mib, UInt32(mib.count), nil, &len, nil, 0) == 0, len > 0 else {
-            return (0, 0)
+            return nil
         }
 
-        var buffer = [UInt8](repeating: 0, count: len)
-        guard sysctl(&mib, UInt32(mib.count), &buffer, &len, nil, 0) == 0 else {
-            return (0, 0)
+        var actualLen = len + 4096
+        var buffer = [UInt8](repeating: 0, count: actualLen)
+        guard sysctl(&mib, UInt32(mib.count), &buffer, &actualLen, nil, 0) == 0, actualLen > 0 else {
+            return nil
         }
 
         var totalRx: UInt64 = 0
         var totalTx: UInt64 = 0
+        var matchedAny = false
         var nameBuf = [CChar](repeating: 0, count: Int(IFNAMSIZ))
 
         buffer.withUnsafeBytes { rawBuf in
-            guard let base = rawBuf.baseAddress else { return }
             var offset = 0
-            while offset + MemoryLayout<if_msghdr>.size <= len {
-                let hdr = base.advanced(by: offset).assumingMemoryBound(to: if_msghdr.self).pointee
+            while offset + MemoryLayout<if_msghdr>.size <= actualLen {
+                let hdr = rawBuf.loadUnaligned(fromByteOffset: offset, as: if_msghdr.self)
                 let msgLen = Int(hdr.ifm_msglen)
-                guard msgLen > 0, offset + msgLen <= len else { break }
+                guard msgLen > 0, offset + msgLen <= actualLen else { break }
 
                 if Int32(hdr.ifm_type) == RTM_IFINFO2,
-                   offset + MemoryLayout<if_msghdr2>.size <= len {
-                    let hdr2 = base.advanced(by: offset).assumingMemoryBound(to: if_msghdr2.self).pointee
+                   msgLen >= MemoryLayout<if_msghdr2>.size,
+                   offset + MemoryLayout<if_msghdr2>.size <= actualLen {
+                    let hdr2 = rawBuf.loadUnaligned(fromByteOffset: offset, as: if_msghdr2.self)
                     let flags = hdr2.ifm_flags
                     let isUp = (flags & IFF_UP) != 0
                     let isRunning = (flags & IFF_RUNNING) != 0
@@ -275,10 +305,12 @@ final class SystemMonitor: @unchecked Sendable {
                             if name == targetInterface {
                                 totalRx &+= hdr2.ifm_data.ifi_ibytes
                                 totalTx &+= hdr2.ifm_data.ifi_obytes
+                                matchedAny = true
                             }
                         } else if !name.hasPrefix("utun") && !name.hasPrefix("llw") && !name.hasPrefix("awdl") && !name.hasPrefix("bridge") {
                             totalRx &+= hdr2.ifm_data.ifi_ibytes
                             totalTx &+= hdr2.ifm_data.ifi_obytes
+                            matchedAny = true
                         }
                     }
                 }
@@ -286,6 +318,9 @@ final class SystemMonitor: @unchecked Sendable {
             }
         }
 
+        if !targetInterface.isEmpty && !matchedAny {
+            return nil
+        }
         return (totalRx, totalTx)
     }
 
@@ -336,6 +371,7 @@ final class SystemMonitor: @unchecked Sendable {
 
     func resetProcessSampler() {
         processLock.lock()
+        processSamplerGeneration &+= 1
         prevProcCPUNs.removeAll()
         prevProcSampleTime = nil
         processLock.unlock()
@@ -346,18 +382,19 @@ final class SystemMonitor: @unchecked Sendable {
         guard !pids.isEmpty else { return ([], []) }
 
         processLock.lock()
+        let startGen = processSamplerGeneration
         var prevTimes = prevProcCPUNs
         var prevTime = prevProcSampleTime
         processLock.unlock()
 
-        var now = Date().timeIntervalSinceReferenceDate
+        var now = ProcessInfo.processInfo.systemUptime
         var dt = prevTime.map { now - $0 } ?? 0
 
-        if dt <= 0.20 || prevTimes.isEmpty {
+        if dt <= 0.20 || dt > 10.0 || prevTimes.isEmpty {
             prevTimes = captureCPUNanoseconds(for: pids)
-            prevTime = Date().timeIntervalSinceReferenceDate
+            prevTime = ProcessInfo.processInfo.systemUptime
             Thread.sleep(forTimeInterval: 0.35)
-            now = Date().timeIntervalSinceReferenceDate
+            now = ProcessInfo.processInfo.systemUptime
             dt = now - (prevTime ?? now)
         }
 
@@ -394,8 +431,10 @@ final class SystemMonitor: @unchecked Sendable {
         }
 
         processLock.lock()
-        prevProcCPUNs = nextTimes
-        prevProcSampleTime = now
+        if processSamplerGeneration == startGen {
+            prevProcCPUNs = nextTimes
+            prevProcSampleTime = now
+        }
         processLock.unlock()
 
         let topCPURaw = rawItems.sorted { $0.cpu > $1.cpu }.prefix(limit)

@@ -402,7 +402,7 @@ public struct AudioBluetoothConsoleView: View {
             }
 
             ConsoleCard("音频输入设备（麦克风）") {
-                if let cur = store.currentInputDevice, !cur.isBuiltin, store.builtinInputDevice != nil {
+                if let cur = store.currentInputDevice, cur.isBluetooth, store.builtinInputDevice != nil {
                     ConsoleRow(
                         title: "防止蓝牙通话降质",
                         subtitle: "当前正在使用蓝牙麦克风，切回 Mac 内建麦可立刻恢复高清立体声输出"

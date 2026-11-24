@@ -119,42 +119,6 @@ public enum StatusBadgeRenderer {
             return .systemBlue
         }()
 
-        let numStr = String(format: "%.0f", topPct)
-        let topAttr = NSMutableAttributedString(
-            string: numStr,
-            attributes: [
-                .font: topValueFont,
-                .foregroundColor: memoryTextColor,
-                .kern: -0.2
-            ]
-        )
-        topAttr.append(NSAttributedString(
-            string: "%",
-            attributes: [
-                .font: topPercentFont,
-                .foregroundColor: memoryTextColor.withAlphaComponent(0.88)
-            ]
-        ))
-
-        let dominantIsUp = network.dominantIsUpload
-        let (valText, unitText) = Formatters.splitSpeed(network.dominantSpeedBytesPerSec)
-        let subFg = fg.withAlphaComponent(0.92)
-        let botAttr = NSMutableAttributedString(
-            string: valText,
-            attributes: [
-                .font: bottomValueFont,
-                .foregroundColor: subFg,
-                .kern: -0.2
-            ]
-        )
-        botAttr.append(NSAttributedString(
-            string: "\u{2009}\(unitText)",
-            attributes: [
-                .font: bottomUnitFont,
-                .foregroundColor: fg.withAlphaComponent(0.84)
-            ]
-        ))
-
         let width: CGFloat = (style == .capsule) ? fixedCapsuleWidth : 22.5
         let size = NSSize(width: width, height: height)
 
@@ -180,125 +144,164 @@ public enum StatusBadgeRenderer {
         }
         rep.size = size
 
-        NSGraphicsContext.saveGraphicsState()
-        if let nsCtx = NSGraphicsContext(bitmapImageRep: rep) {
-            NSGraphicsContext.current = nsCtx
-            let ctx = nsCtx.cgContext
-            ctx.setAllowsAntialiasing(true)
-            ctx.setShouldAntialias(true)
-            ctx.setAllowsFontSmoothing(false)
-            ctx.setShouldSmoothFonts(false)
-            ctx.setAllowsFontSubpixelPositioning(true)
-            ctx.setShouldSubpixelPositionFonts(true)
+        let drawingAppearance = NSAppearance(named: isDarkMenuBar ? .darkAqua : .aqua) ?? NSAppearance.currentDrawing()
+        drawingAppearance.performAsCurrentDrawingAppearance {
+            NSGraphicsContext.saveGraphicsState()
+            if let nsCtx = NSGraphicsContext(bitmapImageRep: rep) {
+                NSGraphicsContext.current = nsCtx
+                let ctx = nsCtx.cgContext
+                ctx.setAllowsAntialiasing(true)
+                ctx.setShouldAntialias(true)
+                ctx.setAllowsFontSmoothing(false)
+                ctx.setShouldSmoothFonts(false)
+                ctx.setAllowsFontSubpixelPositioning(true)
+                ctx.setShouldSubpixelPositionFonts(true)
 
-            switch style {
-            case .capsule:
-                if showBatteryPercentInRing {
-                    let center = CGPoint(x: ringCenterX, y: 11.7)
-                    drawOpenTopBatteryRing(
-                        ctx: ctx,
-                        center: center,
-                        radius: ringRadius,
-                        lineWidth: 2.35,
-                        percentage: battery.percentage,
-                        track: trackColor,
-                        ringColor: batColor,
-                        textColor: (semanticColor && battery.showsChargingIndicator) ? .systemGreen : fg
+                switch style {
+                case .capsule:
+                    let numStr = String(format: "%.0f", topPct)
+                    let topAttr = NSMutableAttributedString(
+                        string: numStr,
+                        attributes: [
+                            .font: topValueFont,
+                            .foregroundColor: memoryTextColor,
+                            .kern: -0.2
+                        ]
                     )
-                    drawWiFiGlyph(
+                    topAttr.append(NSAttributedString(
+                        string: "%",
+                        attributes: [
+                            .font: topPercentFont,
+                            .foregroundColor: memoryTextColor.withAlphaComponent(0.88)
+                        ]
+                    ))
+
+                    let dominantIsUp = network.dominantIsUpload
+                    let (valText, unitText) = Formatters.splitSpeed(network.dominantSpeedBytesPerSec)
+                    let subFg = fg.withAlphaComponent(0.92)
+                    let botAttr = NSMutableAttributedString(
+                        string: valText,
+                        attributes: [
+                            .font: bottomValueFont,
+                            .foregroundColor: subFg,
+                            .kern: -0.2
+                        ]
+                    )
+                    botAttr.append(NSAttributedString(
+                        string: "\u{2009}\(unitText)",
+                        attributes: [
+                            .font: bottomUnitFont,
+                            .foregroundColor: fg.withAlphaComponent(0.84)
+                        ]
+                    ))
+
+                    if showBatteryPercentInRing {
+                        let center = CGPoint(x: ringCenterX, y: 11.7)
+                        drawOpenTopBatteryRing(
+                            ctx: ctx,
+                            center: center,
+                            radius: ringRadius,
+                            lineWidth: 2.35,
+                            percentage: battery.percentage,
+                            track: trackColor,
+                            ringColor: batColor,
+                            textColor: (semanticColor && battery.showsChargingIndicator) ? .systemGreen : fg
+                        )
+                        drawWiFiGlyph(
+                            ctx: ctx,
+                            center: CGPoint(x: center.x, y: center.y - 1.35),
+                            scale: 0.85,
+                            signalBars: wifi.signalBars,
+                            poweredOn: wifi.isPoweredOn,
+                            color: fg
+                        )
+                        if battery.showsChargingIndicator {
+                            drawChargingBolt(
+                                ctx: ctx,
+                                center: CGPoint(x: center.x + ringRadius * 0.72, y: center.y - ringRadius * 0.70),
+                                color: fg
+                            )
+                        }
+                    } else {
+                        let center = CGPoint(x: ringCenterX, y: 12.0)
+                        drawFullRing(ctx: ctx, center: center, radius: ringRadius, lineWidth: 2.4, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
+                        drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.35), scale: 1.0, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                        if battery.showsChargingIndicator {
+                            drawChargingBolt(
+                                ctx: ctx,
+                                center: CGPoint(x: center.x + ringRadius * 0.72, y: center.y - ringRadius * 0.70),
+                                color: fg
+                            )
+                        }
+                    }
+
+                    // Clean left-aligned two-line stack visually spanning the enlarged 21.5pt left ring
+                    let topDrawY: CGFloat = 11.4
+                    let botDrawY: CGFloat = 1.6
+                    topAttr.draw(at: NSPoint(x: capsuleTextX, y: topDrawY))
+
+                    let botBaselineY = botDrawY - bottomValueFont.descender
+                    let arrowCenterY = botBaselineY + (bottomValueFont.capHeight * 0.5)
+                    drawMicroArrow(
                         ctx: ctx,
-                        center: CGPoint(x: center.x, y: center.y - 1.35),
-                        scale: 0.85,
-                        signalBars: wifi.signalBars,
-                        poweredOn: wifi.isPoweredOn,
-                        color: fg
+                        origin: CGPoint(x: capsuleTextX + capsuleArrowCenterOffsetX, y: arrowCenterY),
+                        pointingUp: dominantIsUp,
+                        color: subFg
+                    )
+                    botAttr.draw(at: NSPoint(x: capsuleTextX + capsuleSpeedTextOffsetX, y: botDrawY))
+
+                case .dualRing:
+                    let center = CGPoint(x: 11.25, y: 12.0)
+                    drawFullRing(ctx: ctx, center: center, radius: 9.6, lineWidth: 2.35, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
+                    drawFullRing(ctx: ctx, center: center, radius: 6.7, lineWidth: 1.65, progress: cpu.totalUsage / 100.0, track: trackColor.withAlphaComponent(0.18), color: cpuColor)
+                    let numText = String(format: "%.0f", topPct)
+                    let font = NSFont.monospacedDigitSystemFont(ofSize: 7.8, weight: .bold)
+                    let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: fg]
+                    let textSize = (numText as NSString).size(withAttributes: attrs)
+                    (numText as NSString).draw(
+                        at: NSPoint(x: center.x - textSize.width / 2.0, y: center.y - textSize.height / 2.0 - 0.2),
+                        withAttributes: attrs
                     )
                     if battery.showsChargingIndicator {
                         drawChargingBolt(
                             ctx: ctx,
-                            center: CGPoint(x: center.x + ringRadius * 0.72, y: center.y - ringRadius * 0.70),
+                            center: CGPoint(x: center.x + 9.6 * 0.72, y: center.y - 9.6 * 0.70),
                             color: fg
                         )
                     }
-                } else {
-                    let center = CGPoint(x: ringCenterX, y: 12.0)
-                    drawFullRing(ctx: ctx, center: center, radius: ringRadius, lineWidth: 2.4, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
-                    drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.35), scale: 1.0, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+
+                case .triArc:
+                    let center = CGPoint(x: 11.25, y: 12.0)
+                    let radius: CGFloat = 9.5
+                    drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 8, spanCW: 104, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
+                    drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 128, spanCW: 104, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
+                    drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 248, spanCW: 104, progress: cpu.totalUsage / 100.0, track: trackColor, color: cpuColor)
+                    drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 0.98, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
                     if battery.showsChargingIndicator {
                         drawChargingBolt(
                             ctx: ctx,
-                            center: CGPoint(x: center.x + ringRadius * 0.72, y: center.y - ringRadius * 0.70),
+                            center: CGPoint(x: center.x + radius * 0.72, y: center.y - radius * 0.70),
                             color: fg
                         )
                     }
-                }
 
-                // Clean left-aligned two-line stack visually spanning the enlarged 21.5pt left ring
-                let topDrawY: CGFloat = 11.4
-                let botDrawY: CGFloat = 1.6
-                topAttr.draw(at: NSPoint(x: capsuleTextX, y: topDrawY))
-
-                let botBaselineY = botDrawY - bottomValueFont.descender
-                let arrowCenterY = botBaselineY + (bottomValueFont.capHeight * 0.5)
-                drawMicroArrow(
-                    ctx: ctx,
-                    origin: CGPoint(x: capsuleTextX + capsuleArrowCenterOffsetX, y: arrowCenterY),
-                    pointingUp: dominantIsUp,
-                    color: subFg
-                )
-                botAttr.draw(at: NSPoint(x: capsuleTextX + capsuleSpeedTextOffsetX, y: botDrawY))
-
-            case .dualRing:
-                let center = CGPoint(x: 11.25, y: 12.0)
-                drawFullRing(ctx: ctx, center: center, radius: 9.6, lineWidth: 2.35, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
-                drawFullRing(ctx: ctx, center: center, radius: 6.7, lineWidth: 1.65, progress: cpu.totalUsage / 100.0, track: trackColor.withAlphaComponent(0.18), color: cpuColor)
-                let numText = String(format: "%.0f", topPct)
-                let font = NSFont.monospacedDigitSystemFont(ofSize: 7.8, weight: .bold)
-                let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: fg]
-                let textSize = (numText as NSString).size(withAttributes: attrs)
-                (numText as NSString).draw(
-                    at: NSPoint(x: center.x - textSize.width / 2.0, y: center.y - textSize.height / 2.0 - 0.2),
-                    withAttributes: attrs
-                )
-                if battery.showsChargingIndicator {
-                    drawChargingBolt(
-                        ctx: ctx,
-                        center: CGPoint(x: center.x + 9.6 * 0.72, y: center.y - 9.6 * 0.70),
-                        color: fg
-                    )
-                }
-
-            case .triArc:
-                let center = CGPoint(x: 11.25, y: 12.0)
-                let radius: CGFloat = 9.5
-                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 8, spanCW: 104, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
-                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 128, spanCW: 104, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
-                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 248, spanCW: 104, progress: cpu.totalUsage / 100.0, track: trackColor, color: cpuColor)
-                drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 0.98, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
-                if battery.showsChargingIndicator {
-                    drawChargingBolt(
-                        ctx: ctx,
-                        center: CGPoint(x: center.x + radius * 0.72, y: center.y - radius * 0.70),
-                        color: fg
-                    )
-                }
-
-            case .splitArc:
-                let center = CGPoint(x: 11.25, y: 12.0)
-                let radius: CGFloat = 9.5
-                drawBottomUpRightArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
-                drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 190, spanCW: 160, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
-                drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 1.0, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
-                if battery.showsChargingIndicator {
-                    drawChargingBolt(
-                        ctx: ctx,
-                        center: CGPoint(x: center.x + radius * 0.72, y: center.y - radius * 0.70),
-                        color: fg
-                    )
+                case .splitArc:
+                    let center = CGPoint(x: 11.25, y: 12.0)
+                    let radius: CGFloat = 9.5
+                    drawBottomUpRightArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, progress: Double(battery.percentage) / 100.0, track: trackColor, color: batColor)
+                    drawSegmentArc(ctx: ctx, center: center, radius: radius, lineWidth: 2.35, startCW: 190, spanCW: 160, progress: topPct / 100.0, track: trackColor, color: memoryArcColor)
+                    drawWiFiGlyph(ctx: ctx, center: CGPoint(x: center.x, y: center.y - 0.3), scale: 1.0, signalBars: wifi.signalBars, poweredOn: wifi.isPoweredOn, color: fg)
+                    if battery.showsChargingIndicator {
+                        drawChargingBolt(
+                            ctx: ctx,
+                            center: CGPoint(x: center.x + radius * 0.72, y: center.y - radius * 0.70),
+                            color: fg
+                        )
+                    }
                 }
             }
+            NSGraphicsContext.restoreGraphicsState()
         }
-        NSGraphicsContext.restoreGraphicsState()
 
         let image = NSImage(size: size)
         image.addRepresentation(rep)

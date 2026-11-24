@@ -39,6 +39,9 @@ public final class DuoBarStore: ObservableObject {
                 refreshListeningPorts()
             } else if telemetryTab != .ports {
                 pendingKillPortID = nil
+                if currentPage == .telemetry {
+                    refreshTopProcesses()
+                }
             }
         }
     }
@@ -76,6 +79,8 @@ public final class DuoBarStore: ObservableObject {
     private var isConsoleOpen = false
     private var isScreenAsleep = false
     private var isSamplingTelemetry = false
+    private var pendingHeavyRefresh = false
+    private var pendingForcePublish = false
     private var isSamplingBattery = false
     private var isSamplingWiFi = false
     private var isSamplingProcesses = false
@@ -135,6 +140,8 @@ public final class DuoBarStore: ObservableObject {
             }
         }
 
+        wifiService.startMonitoring()
+
         lastRefreshInterval = prefs.refreshInterval
         prefs.objectWillChange
             .sink { [weak self] _ in
@@ -154,6 +161,7 @@ public final class DuoBarStore: ObservableObject {
     }
 
     deinit {
+        timer?.invalidate()
         powerSettleWork?.cancel()
         pendingBatteryRefreshWork?.cancel()
         pendingWiFiRefreshWork?.cancel()
@@ -185,6 +193,8 @@ public final class DuoBarStore: ObservableObject {
                     self.timer = nil
                     self.powerSettleWork?.cancel()
                     self.powerSettleWork = nil
+                    self.powerSettleStep = Int.max
+                    self.powerSettleLastSignature = nil
                     self.pendingBatteryRefreshWork?.cancel()
                     self.pendingBatteryRefreshWork = nil
                     self.pendingWiFiRefreshWork?.cancel()
@@ -315,12 +325,13 @@ public final class DuoBarStore: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isSamplingBattery = false
-                self.latestBattery = bat
+                let mergedBat = detailed ? bat : mergeDetailedBatteryFields(from: self.latestBattery, into: bat)
+                self.latestBattery = mergedBat
                 if self.isUIActive {
-                    self.battery = bat
+                    self.battery = mergedBat
                 }
                 self.onStatusBarNeedsRedraw?()
-                self.scheduleNextPowerSettleIfNeeded(after: bat)
+                self.scheduleNextPowerSettleIfNeeded(after: mergedBat)
             }
         }
     }
@@ -355,6 +366,8 @@ public final class DuoBarStore: ObservableObject {
         if (consistent && stable) || powerSettleStep >= delays.count {
             powerSettleWork?.cancel()
             powerSettleWork = nil
+            powerSettleStep = Int.max
+            powerSettleLastSignature = nil
             return
         }
         let delay = delays[powerSettleStep]
@@ -422,7 +435,13 @@ public final class DuoBarStore: ObservableObject {
         forceRouteRefresh: Bool,
         forcePublish: Bool
     ) {
-        guard !isSamplingTelemetry else { return }
+        guard !isSamplingTelemetry else {
+            if includeDisk || includeDetailedBattery || forcePublish {
+                pendingHeavyRefresh = pendingHeavyRefresh || includeDisk || includeDetailedBattery
+                pendingForcePublish = pendingForcePublish || forcePublish
+            }
+            return
+        }
         isSamplingTelemetry = true
 
         let mon = systemMonitor
@@ -455,7 +474,9 @@ public final class DuoBarStore: ObservableObject {
                     self.latestDisk = nextDisk
                 }
                 if let nextBat {
-                    self.latestBattery = nextBat
+                    self.latestBattery = includeDetailedBattery
+                        ? nextBat
+                        : mergeDetailedBatteryFields(from: self.latestBattery, into: nextBat)
                 }
                 if let nextWiFi {
                     self.latestWiFi = mergeWiFiLists(from: self.latestWiFi, into: nextWiFi)
@@ -466,6 +487,16 @@ public final class DuoBarStore: ObservableObject {
                     self.publishLatestSnapshotsToUI()
                 }
                 self.onStatusBarNeedsRedraw?()
+
+                if self.pendingHeavyRefresh || self.pendingForcePublish {
+                    let heavy = self.pendingHeavyRefresh
+                    let publish = self.pendingForcePublish
+                    self.pendingHeavyRefresh = false
+                    self.pendingForcePublish = false
+                    if !self.isScreenAsleep {
+                        self.refreshAll(includeHeavy: heavy, forcePublish: publish)
+                    }
+                }
             }
         }
     }
@@ -644,49 +675,67 @@ public final class DuoBarStore: ObservableObject {
     // MARK: - Wi-Fi Actions (In-Range Only)
 
     public func scanNearbyWiFi() {
-        guard wifi.isPoweredOn, !wifi.isScanning else { return }
-        wifi.isScanning = true
-        wifi.lastError = nil
-        latestWiFi = wifi
-        let current = wifi.currentSSID
-        let rssi = wifi.rssi
+        guard latestWiFi.isPoweredOn, !latestWiFi.isScanning else { return }
+        latestWiFi.isScanning = true
+        latestWiFi.lastError = nil
+        if isUIActive {
+            wifi = latestWiFi
+        }
+        let current = latestWiFi.currentSSID
+        let rssi = latestWiFi.rssi
         wifiService.scanAndClassifyNetworks(
             currentSSID: current,
             currentRSSI: rssi
         ) { [weak self] knownNearby, otherNearby, error in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.wifi.isScanning = false
-                self.wifi.knownNetworks = knownNearby
-                self.wifi.nearbyNetworks = otherNearby
-                if let error {
-                    self.wifi.lastError = error
+                self.latestWiFi.isScanning = false
+                if self.latestWiFi.isPoweredOn {
+                    self.latestWiFi.knownNetworks = knownNearby
+                    self.latestWiFi.nearbyNetworks = otherNearby
+                    if let error {
+                        self.latestWiFi.lastError = error
+                    }
+                } else {
+                    self.latestWiFi.knownNetworks = []
+                    self.latestWiFi.nearbyNetworks = []
                 }
-                self.latestWiFi = self.wifi
+                if self.isUIActive {
+                    self.wifi = self.latestWiFi
+                }
             }
         }
     }
 
     public func setWiFiPower(_ on: Bool) {
-        let iface = wifi.interfaceName
-        wifi.isPoweredOn = on
+        let iface = latestWiFi.interfaceName
+        latestWiFi.isPoweredOn = on
+        latestWiFi.lastError = nil
         if !on {
-            wifi.isConnected = false
-            wifi.currentSSID = nil
-            wifi.knownNetworks = []
-            wifi.nearbyNetworks = []
+            latestWiFi.isConnected = false
+            latestWiFi.currentSSID = nil
+            latestWiFi.knownNetworks = []
+            latestWiFi.nearbyNetworks = []
+            latestWiFi.isScanning = false
+            latestWiFi.connectingSSID = nil
+            passwordTargetSSID = nil
+            passwordInput = ""
         }
-        latestWiFi = wifi
+        if isUIActive {
+            wifi = latestWiFi
+        }
         onStatusBarNeedsRedraw?()
         wifiService.setPower(on, interfaceName: iface) { [weak self] ok, err in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if !ok {
-                    self.wifi.lastError = err ?? "无法切换 Wi-Fi 状态"
-                    self.latestWiFi.lastError = self.wifi.lastError
+                    self.latestWiFi.lastError = err ?? "无法切换 Wi-Fi 状态"
+                    if self.isUIActive {
+                        self.wifi = self.latestWiFi
+                    }
                 }
                 self.refreshWiFiQuickState(throttled: false)
-                if on && self.currentPage == .wifi {
+                if ok && on && self.isPopoverOpen && self.currentPage == .wifi {
                     self.scanNearbyWiFi()
                 }
             }
@@ -694,40 +743,52 @@ public final class DuoBarStore: ObservableObject {
     }
 
     public func connectKnownWiFi(ssid: String) {
-        guard wifi.isPoweredOn else { return }
-        wifi.connectingSSID = ssid
-        wifi.lastError = nil
-        latestWiFi = wifi
-        let iface = wifi.interfaceName
+        guard latestWiFi.isPoweredOn, latestWiFi.connectingSSID == nil else { return }
+        latestWiFi.connectingSSID = ssid
+        latestWiFi.lastError = nil
+        if isUIActive {
+            wifi = latestWiFi
+        }
+        let iface = latestWiFi.interfaceName
         wifiService.connectToKnownNetwork(ssid: ssid, interfaceName: iface) { [weak self] ok, err in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.wifi.connectingSSID = nil
+                self.latestWiFi.connectingSSID = nil
                 if !ok {
-                    self.wifi.lastError = err ?? "连接 \(ssid) 失败"
+                    self.latestWiFi.lastError = err ?? "连接 \(ssid) 失败"
                 }
-                self.latestWiFi = self.wifi
+                if self.isUIActive {
+                    self.wifi = self.latestWiFi
+                }
                 self.refreshWiFiQuickState(throttled: false)
-                self.scanNearbyWiFi()
+                if self.isPopoverOpen && self.currentPage == .wifi && self.latestWiFi.isPoweredOn {
+                    self.scanNearbyWiFi()
+                }
             }
         }
     }
 
     public func connectNearbyWiFi(ssid: String, password: String?) {
-        guard wifi.isPoweredOn else { return }
-        wifi.connectingSSID = ssid
-        wifi.lastError = nil
-        latestWiFi = wifi
+        guard latestWiFi.isPoweredOn, latestWiFi.connectingSSID == nil else { return }
+        latestWiFi.connectingSSID = ssid
+        latestWiFi.lastError = nil
+        if isUIActive {
+            wifi = latestWiFi
+        }
         wifiService.connectToNearbyNetwork(ssid: ssid, password: password) { [weak self] ok, err in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.wifi.connectingSSID = nil
+                self.latestWiFi.connectingSSID = nil
                 if !ok {
-                    self.wifi.lastError = err ?? "连接 \(ssid) 失败，请检查密码"
+                    self.latestWiFi.lastError = err ?? "连接 \(ssid) 失败，请检查密码"
                 }
-                self.latestWiFi = self.wifi
+                if self.isUIActive {
+                    self.wifi = self.latestWiFi
+                }
                 self.refreshWiFiQuickState(throttled: false)
-                self.scanNearbyWiFi()
+                if self.isPopoverOpen && self.currentPage == .wifi && self.latestWiFi.isPoweredOn {
+                    self.scanNearbyWiFi()
+                }
             }
         }
     }
@@ -744,8 +805,14 @@ public final class DuoBarStore: ObservableObject {
 
     public func navigate(to page: PopoverPage) {
         let wasTelemetry = (currentPage == .telemetry)
+        let wasWiFi = (currentPage == .wifi)
         isGoingForward = (page != .overview)
         currentPage = page
+
+        if wasWiFi && page != .wifi {
+            passwordTargetSSID = nil
+            passwordInput = ""
+        }
 
         if page == .telemetry {
             refreshAll(includeHeavy: true, forcePublish: true)
@@ -822,12 +889,42 @@ public final class DuoBarStore: ObservableObject {
 
 private func mergeWiFiLists(from current: WiFiState, into sampled: WiFiState) -> WiFiState {
     var merged = sampled
-    if !current.knownNetworks.isEmpty && sampled.isPoweredOn {
-        merged.knownNetworks = current.knownNetworks
+    if sampled.isPoweredOn {
+        if !current.knownNetworks.isEmpty {
+            merged.knownNetworks = current.knownNetworks
+        }
+        merged.nearbyNetworks = current.nearbyNetworks
+    } else {
+        merged.knownNetworks = []
+        merged.nearbyNetworks = []
     }
-    merged.nearbyNetworks = sampled.isPoweredOn ? current.nearbyNetworks : []
     merged.isScanning = current.isScanning
     merged.connectingSSID = current.connectingSSID
     merged.lastError = current.lastError
+    return merged
+}
+
+private func mergeDetailedBatteryFields(from current: BatteryStats, into sampled: BatteryStats) -> BatteryStats {
+    var merged = sampled
+    if current.cycleCount > 0 {
+        merged.cycleCount = current.cycleCount
+    }
+    if current.healthPercent > 0 {
+        merged.healthPercent = current.healthPercent
+    }
+    if sampled.isPluggedIn {
+        if merged.adapterRatedWatts == nil {
+            merged.adapterRatedWatts = current.adapterRatedWatts
+        }
+        if merged.systemPowerInWatts == nil {
+            merged.systemPowerInWatts = current.systemPowerInWatts
+        }
+    } else {
+        merged.adapterRatedWatts = nil
+        merged.systemPowerInWatts = nil
+    }
+    if merged.systemLoadWatts == nil {
+        merged.systemLoadWatts = current.systemLoadWatts
+    }
     return merged
 }

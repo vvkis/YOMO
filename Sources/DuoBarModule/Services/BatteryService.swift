@@ -58,7 +58,7 @@ final class BatteryService: @unchecked Sendable {
             let current = desc[kIOPSCurrentCapacityKey as String] as? Int ?? 100
             let maxCap = desc[kIOPSMaxCapacityKey as String] as? Int ?? 100
             if maxCap > 0 {
-                stats.percentage = min(100, max(0, Int((Double(current) / Double(maxCap)) * 100.0)))
+                stats.percentage = min(100, max(0, Int(round((Double(current) / Double(maxCap)) * 100.0))))
             }
 
             let source = desc[kIOPSPowerSourceStateKey as String] as? String ?? ""
