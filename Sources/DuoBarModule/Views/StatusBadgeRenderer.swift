@@ -6,9 +6,9 @@ public enum StatusBadgeRenderer {
     /// Left ring occupies x: 0.4 ... 22.0 (center 11.2, radius 9.6, stroke 2.35)
     private static let ringCenterX: CGFloat = 11.2
     private static let ringRadius: CGFloat = 9.6
-    private static let capsuleTextX: CGFloat = 24.4
-    private static let capsuleArrowCenterOffsetX: CGFloat = 2.2
-    private static let capsuleSpeedTextOffsetX: CGFloat = 6.0
+    private static let capsuleTextX: CGFloat = 23.6
+    private static let capsuleArrowCenterOffsetX: CGFloat = 2.0
+    private static let capsuleSpeedTextOffsetX: CGFloat = 5.4
 
     private static let topValueFont = NSFont.monospacedDigitSystemFont(ofSize: 10.8, weight: .bold)
     private static let topPercentFont = NSFont.systemFont(ofSize: 8.8, weight: .bold)
@@ -30,28 +30,28 @@ public enum StatusBadgeRenderer {
         return NSFont(descriptor: desc, size: size) ?? base
     }
 
-    /// Invariant compact width reserving worst-case bounds ("100%" / "↓ 999 M") so left-aligned text
-    /// sits flush to the right canvas edge with zero wasted trailing gap and zero horizontal jitter.
-    private static let fixedCapsuleWidth: CGFloat = {
-        let maxTop = NSMutableAttributedString(
-            string: "100",
+    /// Compact baseline width matching normal steady-state text ("99%" / "↓0.0K") so idle badges have
+    /// zero dead trailing whitespace while rare wider bursts ("100%" / "↓999M") expand cleanly without clipping.
+    private static let compactCapsuleBaseWidth: CGFloat = {
+        let baseTop = NSMutableAttributedString(
+            string: "99",
             attributes: [.font: topValueFont, .kern: -0.2]
         )
-        maxTop.append(NSAttributedString(
+        baseTop.append(NSAttributedString(
             string: "%",
             attributes: [.font: topPercentFont]
         ))
 
-        let maxBot = NSMutableAttributedString(
-            string: "999",
+        let baseBot = NSMutableAttributedString(
+            string: "0.0",
             attributes: [.font: bottomValueFont, .kern: -0.2]
         )
-        maxBot.append(NSAttributedString(
-            string: "\u{2009}M",
+        baseBot.append(NSAttributedString(
+            string: "K",
             attributes: [.font: bottomUnitFont]
         ))
-        let maxTextWidth = max(maxTop.size().width, capsuleSpeedTextOffsetX + maxBot.size().width)
-        return ceil(capsuleTextX + maxTextWidth)
+        let baseTextWidth = max(baseTop.size().width, capsuleSpeedTextOffsetX + baseBot.size().width)
+        return ceil(capsuleTextX + baseTextWidth)
     }()
 
     public static func render(
@@ -119,7 +119,52 @@ public enum StatusBadgeRenderer {
             return .systemBlue
         }()
 
-        let width: CGFloat = (style == .capsule) ? fixedCapsuleWidth : 22.5
+        var capsuleTopAttr: NSMutableAttributedString?
+        var capsuleBotAttr: NSMutableAttributedString?
+        let width: CGFloat
+        if style == .capsule {
+            let numStr = String(format: "%.0f", topPct)
+            let topAttr = NSMutableAttributedString(
+                string: numStr,
+                attributes: [
+                    .font: topValueFont,
+                    .foregroundColor: memoryTextColor,
+                    .kern: -0.2
+                ]
+            )
+            topAttr.append(NSAttributedString(
+                string: "%",
+                attributes: [
+                    .font: topPercentFont,
+                    .foregroundColor: memoryTextColor.withAlphaComponent(0.88)
+                ]
+            ))
+
+            let (valText, unitText) = Formatters.splitSpeed(network.dominantSpeedBytesPerSec)
+            let subFg = fg.withAlphaComponent(0.92)
+            let botAttr = NSMutableAttributedString(
+                string: valText,
+                attributes: [
+                    .font: bottomValueFont,
+                    .foregroundColor: subFg,
+                    .kern: -0.2
+                ]
+            )
+            botAttr.append(NSAttributedString(
+                string: unitText,
+                attributes: [
+                    .font: bottomUnitFont,
+                    .foregroundColor: fg.withAlphaComponent(0.84)
+                ]
+            ))
+
+            capsuleTopAttr = topAttr
+            capsuleBotAttr = botAttr
+            let neededTextWidth = max(topAttr.size().width, capsuleSpeedTextOffsetX + botAttr.size().width)
+            width = max(compactCapsuleBaseWidth, ceil(capsuleTextX + neededTextWidth))
+        } else {
+            width = 22.5
+        }
         let size = NSSize(width: width, height: height)
 
         // IMPORTANT: Pre-render into a static Retina NSBitmapImageRep.
@@ -159,41 +204,10 @@ public enum StatusBadgeRenderer {
 
                 switch style {
                 case .capsule:
-                    let numStr = String(format: "%.0f", topPct)
-                    let topAttr = NSMutableAttributedString(
-                        string: numStr,
-                        attributes: [
-                            .font: topValueFont,
-                            .foregroundColor: memoryTextColor,
-                            .kern: -0.2
-                        ]
-                    )
-                    topAttr.append(NSAttributedString(
-                        string: "%",
-                        attributes: [
-                            .font: topPercentFont,
-                            .foregroundColor: memoryTextColor.withAlphaComponent(0.88)
-                        ]
-                    ))
-
                     let dominantIsUp = network.dominantIsUpload
-                    let (valText, unitText) = Formatters.splitSpeed(network.dominantSpeedBytesPerSec)
                     let subFg = fg.withAlphaComponent(0.92)
-                    let botAttr = NSMutableAttributedString(
-                        string: valText,
-                        attributes: [
-                            .font: bottomValueFont,
-                            .foregroundColor: subFg,
-                            .kern: -0.2
-                        ]
-                    )
-                    botAttr.append(NSAttributedString(
-                        string: "\u{2009}\(unitText)",
-                        attributes: [
-                            .font: bottomUnitFont,
-                            .foregroundColor: fg.withAlphaComponent(0.84)
-                        ]
-                    ))
+                    let topAttr = capsuleTopAttr!
+                    let botAttr = capsuleBotAttr!
 
                     if showBatteryPercentInRing {
                         let center = CGPoint(x: ringCenterX, y: 11.7)
