@@ -110,12 +110,15 @@ public struct ClipboardEntry: Identifiable, Codable, Hashable, Sendable {
     public var singleLinePreview: String {
         switch kind {
         case .text:
-            let raw = (text ?? "")
+            guard let fullText = text else { return "(空白文本)" }
+            // Bound prefix BEFORE normalizing so multi-MB entries never allocate full copies per render
+            let sample = fullText.prefix(512)
+            let raw = String(sample)
                 .replacingOccurrences(of: "\r\n", with: " ")
                 .replacingOccurrences(of: "\n", with: " ")
                 .replacingOccurrences(of: "\t", with: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            if raw.count > 120 {
+            if raw.count > 120 || fullText.utf8.count > sample.utf8.count {
                 return String(raw.prefix(120)) + "…"
             }
             return raw.isEmpty ? "(空白文本)" : raw
@@ -128,12 +131,17 @@ public struct ClipboardEntry: Identifiable, Codable, Hashable, Sendable {
     }
 
     public var characterCount: Int {
-        text?.count ?? 0
+        guard let text else { return 0 }
+        // Exact grapheme count for normal snippets; O(1) UTF-16 length for huge (>16 KB) pastes
+        return text.utf8.count <= 16_384 ? text.count : text.utf16.count
     }
 }
 
 /// Zero-permission Carbon global hotkey (⇧⌘V) for popping open Clipboard History from any app.
 private final class ClipboardHotKeyManager {
+    private static let signature: OSType = 0x594F_4D4F // 'YOMO'
+    private static let hotKeyNumber: UInt32 = 1
+
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
     private let onTrigger: () -> Void
@@ -156,8 +164,23 @@ private final class ClipboardHotKeyManager {
         let userData = Unmanaged.passUnretained(self).toOpaque()
         let installStatus = InstallEventHandler(
             GetApplicationEventTarget(),
-            { _, _, userData -> OSStatus in
-                guard let userData else { return noErr }
+            { _, event, userData -> OSStatus in
+                guard let event, let userData else { return OSStatus(eventNotHandledErr) }
+                var incomingID = EventHotKeyID()
+                let paramStatus = GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &incomingID
+                )
+                guard paramStatus == noErr,
+                      incomingID.signature == ClipboardHotKeyManager.signature,
+                      incomingID.id == ClipboardHotKeyManager.hotKeyNumber else {
+                    return OSStatus(eventNotHandledErr)
+                }
                 let mgr = Unmanaged<ClipboardHotKeyManager>.fromOpaque(userData).takeUnretainedValue()
                 mgr.onTrigger()
                 return noErr
@@ -169,8 +192,7 @@ private final class ClipboardHotKeyManager {
         )
         guard installStatus == noErr else { return }
 
-        // 'YOMO' signature = 0x594F4D4F, keyCode = kVK_ANSI_V (9), modifiers = cmdKey | shiftKey
-        let hotKeyID = EventHotKeyID(signature: OSType(0x594F_4D4F), id: 1)
+        let hotKeyID = EventHotKeyID(signature: Self.signature, id: Self.hotKeyNumber)
         let regStatus = RegisterEventHotKey(
             UInt32(kVK_ANSI_V),
             UInt32(cmdKey | shiftKey),
@@ -231,8 +253,9 @@ public final class ClipboardStore: ObservableObject {
     ]
 
     private nonisolated static let maxTextBytes = 2 * 1024 * 1024        // 2 MB text cap
-    private nonisolated static let maxImageBytes = 12 * 1024 * 1024      // 12 MB image cap
-    private nonisolated static let maxStoredImages = 10                  // Bound disk & memory for images
+    private nonisolated static let maxImageBytes = 12 * 1024 * 1024      // 12 MB compressed PNG cap
+    private nonisolated static let maxRawTIFFBytes = 64 * 1024 * 1024    // 64 MB uncompressed Retina TIFF cap prior to PNG compression
+    private nonisolated static let maxStoredImages = 10                  // Bound disk & memory for unpinned images
 
     @Published public private(set) var entries: [ClipboardEntry] = []
     @Published public var searchQuery: String = ""
@@ -309,10 +332,13 @@ public final class ClipboardStore: ObservableObject {
     private var ocrToastClearWorkItem: DispatchWorkItem?
     private var copyFeedbackClearWorkItem: DispatchWorkItem?
     private var copyToastHUD: ClipboardCopyToastHUD?
+    private var captureGeneration: UInt64 = 0
+    private var lazyImagePasteboardProvider: LazyImagePasteboardProvider?
     private let ioQueue = DispatchQueue(label: "com.yomo.clipboard.io", qos: .utility)
     private let ocrQueue = DispatchQueue(label: "com.yomo.clipboard.ocr", qos: .userInitiated)
     private let thumbnailCache = NSCache<NSString, NSImage>()
     private let appIconCache = NSCache<NSString, NSImage>()
+    private var missingAppIconBundleIDs: Set<String> = []
 
     private let storageDirURL: URL
     private let historyFileURL: URL
@@ -336,6 +362,7 @@ public final class ClipboardStore: ObservableObject {
         self.imagesDirURL = storageDirURL.appendingPathComponent("clipboard-images", isDirectory: true)
 
         thumbnailCache.countLimit = 24
+        thumbnailCache.totalCostLimit = 4 * 1024 * 1024 // 4 MB cap for 128px thumbnails
         appIconCache.countLimit = 32
 
         loadPersistedHistory()
@@ -363,6 +390,7 @@ public final class ClipboardStore: ObservableObject {
             startMonitoringTimer()
             syncHotKeyRegistration()
         } else {
+            captureGeneration &+= 1
             stopMonitoringTimer()
             hotKeyManager?.unregister()
         }
@@ -395,7 +423,8 @@ public final class ClipboardStore: ObservableObject {
     // MARK: - Computed Properties for Views
 
     public var filteredEntries: [ClipboardEntry] {
-        let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let qLower = q.lowercased()
         return entries.filter { item in
             switch activeFilter {
             case .all: break
@@ -404,9 +433,9 @@ public final class ClipboardStore: ObservableObject {
             case .pinned: if !item.isPinned { return false }
             }
             if q.isEmpty { return true }
-            if let text = item.text, text.lowercased().contains(q) { return true }
-            if let app = item.sourceAppName, app.lowercased().contains(q) { return true }
-            if item.kind == .image && ("图片".contains(q) || "image".contains(q)) { return true }
+            if let text = item.text, text.range(of: q, options: .caseInsensitive) != nil { return true }
+            if let app = item.sourceAppName, app.range(of: q, options: .caseInsensitive) != nil { return true }
+            if item.kind == .image && ("图片".contains(qLower) || "image".contains(qLower)) { return true }
             return false
         }
     }
@@ -447,10 +476,13 @@ public final class ClipboardStore: ObservableObject {
                 showCopyHUD(title: "复制失败", detail: "图片文件已丢失", isError: true)
                 return false
             }
-            pb.setData(pngData, forType: .png)
-            if let img = NSImage(data: pngData), let tiff = img.tiffRepresentation {
-                pb.setData(tiff, forType: .tiff)
-            }
+            // Write PNG eagerly and supply uncompressed TIFF lazily ONLY if a pasting consumer requests it
+            let provider = LazyImagePasteboardProvider(pngData: pngData)
+            lazyImagePasteboardProvider = provider
+            let pbItem = NSPasteboardItem()
+            pbItem.setData(pngData, forType: .png)
+            pbItem.setDataProvider(provider, forTypes: [.tiff])
+            pb.writeObjects([pbItem])
         }
 
         // Prevent our own write from being re-captured on the next timer tick
@@ -464,7 +496,8 @@ public final class ClipboardStore: ObservableObject {
         showCopyHUD(title: hudTitle, detail: shortDetail, isError: false)
 
         if willAutoPaste {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            // Wait slightly past GlassPopoverPanel's 0.12s dismiss animation so ⌘V lands in the target app
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
                 Self.sendCommandVKeystroke()
             }
         }
@@ -502,7 +535,7 @@ public final class ClipboardStore: ObservableObject {
 
     public func deleteEntry(_ entry: ClipboardEntry) {
         latestEntries.removeAll { $0.id == entry.id }
-        if activeOCRResult?.entryID == entry.id {
+        if activeOCRResult?.entryID == entry.id || ocrScanningEntryID == entry.id {
             dismissOCRResult()
         }
         if let fileName = entry.imageFileName {
@@ -516,7 +549,8 @@ public final class ClipboardStore: ObservableObject {
         let removedIDs = Set(latestEntries.filter { !$0.isPinned }.map(\.id))
         let removedImages = latestEntries.filter { !$0.isPinned }.compactMap(\.imageFileName)
         latestEntries.removeAll { !$0.isPinned }
-        if let activeID = activeOCRResult?.entryID, removedIDs.contains(activeID) {
+        if (activeOCRResult.map { removedIDs.contains($0.entryID) } ?? false)
+            || (ocrScanningEntryID.map { removedIDs.contains($0) } ?? false) {
             dismissOCRResult()
         }
         for fileName in removedImages {
@@ -527,6 +561,7 @@ public final class ClipboardStore: ObservableObject {
     }
 
     public func clearAll() {
+        captureGeneration &+= 1
         let removedImages = latestEntries.compactMap(\.imageFileName)
         latestEntries.removeAll()
         dismissOCRResult()
@@ -747,8 +782,26 @@ public final class ClipboardStore: ObservableObject {
             return cached
         }
         let url = imagesDirURL.appendingPathComponent(fileName)
-        guard let img = NSImage(contentsOf: url) else { return nil }
-        thumbnailCache.setObject(img, forKey: key)
+        // Decode downsampled 128px thumbnail via ImageIO instead of loading full multi-megapixel Retina bitmaps
+        let img: NSImage?
+        if let source = CGImageSourceCreateWithURL(url as CFURL, nil) {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 128,
+                kCGImageSourceShouldCacheImmediately: true
+            ]
+            if let cgThumb = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
+                img = NSImage(cgImage: cgThumb, size: NSSize(width: cgThumb.width, height: cgThumb.height))
+            } else {
+                img = nil
+            }
+        } else {
+            img = nil
+        }
+        guard let img else { return nil }
+        let cost = max(1, Int(img.size.width * img.size.height * 4))
+        thumbnailCache.setObject(img, forKey: key, cost: cost)
         return img
     }
 
@@ -758,7 +811,11 @@ public final class ClipboardStore: ObservableObject {
         if let cached = appIconCache.object(forKey: key) {
             return cached
         }
+        if missingAppIconBundleIDs.contains(bundleID) {
+            return nil
+        }
         guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            missingAppIconBundleIDs.insert(bundleID)
             return nil
         }
         let icon = NSWorkspace.shared.icon(forFile: appURL.path)
@@ -873,6 +930,7 @@ public final class ClipboardStore: ObservableObject {
         if let str = pb.string(forType: .string) {
             let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, str.utf8.count <= Self.maxTextBytes else { return }
+            let gen = captureGeneration
             ioQueue.async { [weak self] in
                 let hash = Self.sha256Hex(Data(str.utf8))
                 let entry = ClipboardEntry(
@@ -883,21 +941,24 @@ public final class ClipboardStore: ObservableObject {
                     sourceBundleID: bundleID
                 )
                 DispatchQueue.main.async {
-                    self?.insertOrBumpEntry(entry)
+                    guard let self, self.isModuleEnabled, self.captureGeneration == gen else { return }
+                    self.insertOrBumpEntry(entry)
                 }
             }
             return
         }
 
-        // 3. Capture Image (screenshots / copied images) when enabled — decode/encode & hash 100% off main thread
+        // 3. Capture Image (screenshots / copied images) when enabled — decode/encode, hash & disk write 100% off main thread
         if saveImages {
             let directPNG = pb.data(forType: .png)
             let rawTIFF = (directPNG == nil) ? pb.data(forType: .tiff) : nil
-            guard let rawData = directPNG ?? rawTIFF, rawData.count <= Self.maxImageBytes else {
+            let isAlreadyPNG = (directPNG != nil)
+            let rawCap = isAlreadyPNG ? Self.maxImageBytes : Self.maxRawTIFFBytes
+            guard let rawData = directPNG ?? rawTIFF, rawData.count <= rawCap else {
                 return
             }
-            let isAlreadyPNG = (directPNG != nil)
             let dirURL = imagesDirURL
+            let gen = captureGeneration
 
             ioQueue.async { [weak self] in
                 guard let rep = NSBitmapImageRep(data: rawData) else { return }
@@ -913,10 +974,26 @@ public final class ClipboardStore: ObservableObject {
                 let hash = Self.sha256Hex(pngData)
                 let pixelW = rep.pixelsWide
                 let pixelH = rep.pixelsHigh
+                let fileName = "\(UUID().uuidString).png"
+                let targetURL = dirURL.appendingPathComponent(fileName)
+
+                // Write PNG atomically with 0600 permissions BEFORE publishing entry to UI
+                guard Self.writeSecureFile(data: pngData, to: targetURL, directory: dirURL) else {
+                    return
+                }
 
                 DispatchQueue.main.async {
-                    guard let self else { return }
+                    guard let self else {
+                        try? FileManager.default.removeItem(at: targetURL)
+                        return
+                    }
+                    guard self.isModuleEnabled, self.captureGeneration == gen else {
+                        self.removeImageFileAsync(fileName)
+                        return
+                    }
                     if let existingIdx = self.latestEntries.firstIndex(where: { $0.kind == .image && $0.contentHash == hash }) {
+                        // Duplicate image already stored: drop the newly written file and bump existing entry
+                        self.removeImageFileAsync(fileName)
                         var bumped = self.latestEntries.remove(at: existingIdx)
                         bumped.createdAt = Date()
                         self.latestEntries.insert(bumped, at: 0)
@@ -924,14 +1001,6 @@ public final class ClipboardStore: ObservableObject {
                         if self.isUIActive { self.publishToUI() }
                         self.persistHistoryAsync()
                         return
-                    }
-
-                    let fileName = "\(UUID().uuidString).png"
-                    let targetURL = dirURL.appendingPathComponent(fileName)
-                    self.ioQueue.async {
-                        try? FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
-                        try? pngData.write(to: targetURL, options: .atomic)
-                        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: targetURL.path)
                     }
 
                     let entry = ClipboardEntry(
@@ -1029,14 +1098,14 @@ public final class ClipboardStore: ObservableObject {
             unpinned = Array(unpinned.prefix(maxUnpinned))
         }
 
-        // 3. Cap total stored unpinned images to prevent unbounded disk/RAM growth
-        var imageCount = pinned.filter { $0.kind == .image }.count
+        // 3. Cap total stored unpinned images to prevent unbounded disk/RAM growth (pinned images do not consume unpinned quota)
+        var unpinnedImageCount = 0
         var filteredUnpinned: [ClipboardEntry] = []
         filteredUnpinned.reserveCapacity(unpinned.count)
         for item in unpinned {
             if item.kind == .image {
-                if imageCount < Self.maxStoredImages {
-                    imageCount += 1
+                if unpinnedImageCount < Self.maxStoredImages {
+                    unpinnedImageCount += 1
                     filteredUnpinned.append(item)
                 } else if let fileName = item.imageFileName {
                     removeImageFileAsync(fileName)
@@ -1049,6 +1118,11 @@ public final class ClipboardStore: ObservableObject {
         pinned.sort { $0.createdAt > $1.createdAt }
         filteredUnpinned.sort { $0.createdAt > $1.createdAt }
         let updated = pinned + filteredUnpinned
+        let updatedIDs = Set(updated.map(\.id))
+        if (activeOCRResult.map { !updatedIDs.contains($0.entryID) } ?? false)
+            || (ocrScanningEntryID.map { !updatedIDs.contains($0) } ?? false) {
+            dismissOCRResult()
+        }
         latestEntries = updated
         return updated.map(\.id) != previousIDs
     }
@@ -1085,12 +1159,32 @@ public final class ClipboardStore: ObservableObject {
         let dir = storageDirURL
         let file = historyFileURL
         ioQueue.async {
-            do {
-                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                let data = try JSONEncoder().encode(snapshot)
-                try data.write(to: file, options: .atomic)
-                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-            } catch {}
+            if let data = try? JSONEncoder().encode(snapshot) {
+                _ = Self.writeSecureFile(data: data, to: file, directory: dir)
+            }
+        }
+    }
+
+    /// Creates parent directories with `0700` permissions and atomically writes a `0600` file
+    /// without exposing a temporary world-readable (`0644`) window.
+    private nonisolated static func writeSecureFile(data: Data, to destination: URL, directory: URL) -> Bool {
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            let tmpURL = directory.appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).tmp")
+            guard fm.createFile(atPath: tmpURL.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+                return false
+            }
+            if fm.fileExists(atPath: destination.path) {
+                _ = try fm.replaceItemAt(destination, withItemAt: tmpURL)
+            } else {
+                try fm.moveItem(at: tmpURL, to: destination)
+            }
+            try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -1132,6 +1226,7 @@ private final class ClipboardCopyToastHUD: NSPanel {
 
     private let model = Model()
     private var dismissWorkItem: DispatchWorkItem?
+    private var showGeneration: UInt64 = 0
     private let panelWidth: CGFloat = 258
     private let panelHeight: CGFloat = 46
 
@@ -1163,6 +1258,9 @@ private final class ClipboardCopyToastHUD: NSPanel {
 
     func show(title: String, detail: String, isError: Bool) {
         dismissWorkItem?.cancel()
+        showGeneration &+= 1
+        let gen = showGeneration
+
         model.title = title
         model.detail = detail
         model.isError = isError
@@ -1188,15 +1286,16 @@ private final class ClipboardCopyToastHUD: NSPanel {
 
         let work = DispatchWorkItem { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.showGeneration == gen else { return }
                 NSAnimationContext.runAnimationGroup({ ctx in
                     ctx.duration = 0.22
                     ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
                     self.animator().alphaValue = 0.0
                 }, completionHandler: { [weak self] in
                     Task { @MainActor [weak self] in
-                        self?.orderOut(nil)
-                        self?.alphaValue = 1.0
+                        guard let self, self.showGeneration == gen else { return }
+                        self.orderOut(nil)
+                        self.alphaValue = 1.0
                     }
                 })
             }
@@ -1240,6 +1339,24 @@ private final class ClipboardCopyToastHUD: NSPanel {
                             .strokeBorder(Color.white.opacity(0.20), lineWidth: 0.75)
                     )
             )
+        }
+    }
+}
+
+/// Supplies uncompressed TIFF on demand ONLY when a paste consumer explicitly requests `.tiff`,
+/// avoiding synchronous 30–60 MB TIFF encoding on the main thread during every image copy.
+private final class LazyImagePasteboardProvider: NSObject, NSPasteboardItemDataProvider {
+    private let pngData: Data
+
+    init(pngData: Data) {
+        self.pngData = pngData
+        super.init()
+    }
+
+    func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
+        guard type == .tiff else { return }
+        if let img = NSImage(data: pngData), let tiff = img.tiffRepresentation {
+            item.setData(tiff, forType: .tiff)
         }
     }
 }

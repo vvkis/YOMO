@@ -118,7 +118,7 @@ public struct ClipboardPopoverView: View {
                         .padding(.horizontal, 12)
                     } else {
                         ScrollView(.vertical, showsIndicators: false) {
-                            VStack(spacing: 2) {
+                            LazyVStack(spacing: 2) {
                                 ForEach(filtered) { item in
                                     ClipboardEntryRow(
                                         entry: item,
