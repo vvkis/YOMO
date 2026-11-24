@@ -930,20 +930,20 @@ public struct SpaceCleanerConsoleView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(maxWidth: 420)
+            .frame(maxWidth: 320)
 
             Spacer()
 
-            Text("显示 \(store.filteredStartupItems.count) 项")
+            Text("共 \(store.startupAppGroups.count) 个应用")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
         .padding(.horizontal, 2)
 
-        // 3. Startup Items List
-        let items = store.filteredStartupItems
-        if store.isScanningStartupItems && items.isEmpty {
+        // 3. App-Grouped Startup Items Table (Tencent Lemon style: App | Status | Master Switch | N Items v)
+        let groups = store.startupAppGroups
+        if store.isScanningStartupItems && groups.isEmpty {
             ConsoleCard {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
@@ -954,7 +954,7 @@ public struct SpaceCleanerConsoleView: View {
                 .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-        } else if items.isEmpty {
+        } else if groups.isEmpty {
             ConsoleCard {
                 HStack(spacing: 10) {
                     Image(systemName: "checkmark.circle.fill")
@@ -962,7 +962,7 @@ public struct SpaceCleanerConsoleView: View {
                         .foregroundStyle(ConsoleTheme.accent)
                     Text(store.startupFilter == .orphaned
                          ? "未检测到目标程序已丢失的僵尸启动项"
-                         : "当前筛选条件下暂无启动项")
+                         : "当前分类下暂无开机启动项")
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
@@ -970,22 +970,41 @@ public struct SpaceCleanerConsoleView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
-            ConsoleCard("检测结果") {
+            ConsoleCard {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        if index > 0 {
-                            ConsoleRowDivider()
-                        }
-                        ConsoleStartupItemRow(
-                            item: item,
-                            appIcon: store.appIcon(for: item),
-                            isToggling: store.togglingStartupItemID == item.id,
-                            onToggleEnabled: item.canToggleDirectly ? { newValue in
-                                store.setUserStartupItemEnabled(item, enabled: newValue)
+                    // Clean Table Column Header
+                    HStack(spacing: 10) {
+                        Text("应用程序")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("启用状态")
+                            .frame(width: 84, alignment: .center)
+                        Text("设置启动项")
+                            .frame(width: 78, alignment: .center)
+                        Text("自启项")
+                            .frame(width: 64, alignment: .trailing)
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+
+                    ForEach(groups) { group in
+                        ConsoleRowDivider()
+                        ConsoleStartupGroupRow(
+                            group: group,
+                            appIcon: store.appIcon(forPath: group.appBundlePath),
+                            isExpanded: store.expandedStartupGroups.contains(group.id),
+                            togglingID: store.togglingStartupItemID,
+                            onToggleExpand: { store.toggleStartupGroupExpanded(group.id) },
+                            onToggleGroup: group.canToggleGroup ? { enabled in
+                                store.setStartupGroupEnabled(group, enabled: enabled)
                             } : nil,
+                            onToggleItem: { item, enabled in
+                                store.setStartupItemEnabled(item, enabled: enabled)
+                            },
                             onOpenSystemSettings: { store.openLoginItemsSettings() },
-                            onReveal: { store.revealInFinder(item.sourcePath) },
-                            onTrash: (item.canMoveToTrash && item.isOrphanedBinary) ? { store.trashUserStartupItem(item) } : nil
+                            onReveal: { path in store.revealInFinder(path) },
+                            onTrash: { item in store.trashUserStartupItem(item) }
                         )
                     }
                 }
@@ -993,17 +1012,24 @@ public struct SpaceCleanerConsoleView: View {
         }
 
         // 4. Guidance Card
-        ConsoleCard("权限边界与层级说明") {
+        ConsoleCard("权限边界与开关原理") {
             ConsoleRow(
-                title: "用户代理（~/Library/LaunchAgents）· 可直接开关",
-                subtitle: "仅对当前用户登录后生效，归个人账号所有。关闭后配置会无损暂存并立即停用，随时可重新开启，无需管理员权限"
+                title: "用户代理 & 系统代理（LaunchAgents）· 免密直接开关",
+                subtitle: "直接通过 macOS launchctl 管理当前用户会话并无损暂存配置，关闭即刻生效，随时可重新开启"
             ) { EmptyView() }
 
             ConsoleRowDivider()
 
             ConsoleRow(
-                title: "系统代理 & 系统守护进程（/Library）· 建议前往系统设置修改",
-                subtitle: "对所有用户或开机 root 权限生效，受 macOS 权限保护。YOMO 不安装常驻 root 守护程序，点击右侧「系统设置」即可在官方「登录项与扩展」中安全开关"
+                title: "系统守护进程（/Library/LaunchDaemons，如 Clash Verge / AweSun）· 按需触发系统授权",
+                subtitle: "YOMO 不安装常驻 root 后台服务；仅在你点击开关时弹出 macOS 原生触控 ID / 管理员授权窗口，授权一次即可批量生效"
+            ) { EmptyView() }
+
+            ConsoleRowDivider()
+
+            ConsoleRow(
+                title: "应用内嵌登录项（macOS BTM）",
+                subtitle: "由系统「登录项与扩展」统一锁管，可切换至「应用内嵌」查看并一键前往系统设置调整"
             ) { EmptyView() }
         }
     }
@@ -1283,114 +1309,203 @@ private struct CleanerCheckGlyph: View {
     }
 }
 
-private struct ConsoleStartupItemRow: View {
-    let item: StartupItemInfo
+private struct ConsoleStartupGroupRow: View {
+    let group: StartupAppGroup
     let appIcon: NSImage?
-    let isToggling: Bool
-    let onToggleEnabled: ((Bool) -> Void)?
+    let isExpanded: Bool
+    let togglingID: String?
+    let onToggleExpand: () -> Void
+    let onToggleGroup: ((Bool) -> Void)?
+    let onToggleItem: (StartupItemInfo, Bool) -> Void
     let onOpenSystemSettings: () -> Void
-    let onReveal: () -> Void
-    let onTrash: (() -> Void)?
+    let onReveal: (String) -> Void
+    let onTrash: (StartupItemInfo) -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 11) {
-            if let appIcon, !item.isOrphanedBinary {
-                Image(nsImage: appIcon)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 30, height: 30)
-            } else {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill((item.isOrphanedBinary ? Color.red : item.scope.tintColor).opacity(0.14))
-                        .frame(width: 30, height: 30)
-                    Image(systemName: item.isOrphanedBinary ? "exclamationmark.triangle.fill" : "bolt.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(item.isOrphanedBinary ? Color.red : item.scope.tintColor)
-                }
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            // App Summary Row
+            HStack(spacing: 10) {
+                Button(action: onToggleExpand) {
+                    HStack(spacing: 10) {
+                        if let appIcon, !group.isAllOrphaned {
+                            Image(nsImage: appIcon)
+                                .resizable()
+                                .interpolation(.high)
+                                .frame(width: 30, height: 30)
+                        } else {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill((group.isAllOrphaned ? Color.red : Color.indigo).opacity(0.14))
+                                    .frame(width: 30, height: 30)
+                                Image(systemName: group.isAllOrphaned ? "exclamationmark.triangle.fill" : "bolt.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(group.isAllOrphaned ? Color.red : Color.indigo)
+                            }
+                        }
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(item.displayName)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(group.displayName)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
 
-                    pill(item.scope.badgeTitle, color: item.scope.tintColor)
-
-                    if item.isOrphanedBinary {
-                        pill("程序已卸载 · 僵尸残留", color: .red)
-                    } else if item.isEnabled {
-                        pill(item.isRunning ? "已开启 · 运行中" : "已开启", color: ConsoleTheme.accent)
-                    } else {
-                        pill("已关闭", color: .secondary)
+                            if group.hasRunningItem {
+                                HStack(spacing: 4) {
+                                    Circle()
+                                        .fill(ConsoleTheme.accent)
+                                        .frame(width: 6, height: 6)
+                                    Text("正在后台运行")
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else if group.requiresAdminForToggle {
+                                Text("含系统守护进程（开关时需触控 ID / 密码）")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
+                        }
                     }
-
-                    if item.keepAlive && item.isEnabled && !item.isOrphanedBinary {
-                        pill("后台保活", color: .orange)
-                    }
-                }
-
-                Text(item.label)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                HStack(spacing: 6) {
-                    Text(item.displaySourcePath)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if let exec = item.executablePath, !exec.isEmpty {
-                        Text("→")
-                        Text(exec)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-            }
-
-            Spacer(minLength: 8)
-
-            HStack(spacing: 8) {
-                if let onTrash {
-                    ConsoleActionButton("清理残留", variant: .destructive, action: onTrash)
-                } else if let onToggleEnabled {
-                    if isToggling {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(width: 40)
-                    } else {
-                        ConsoleSwitch(
-                            isOn: Binding(
-                                get: { item.isEnabled },
-                                set: { onToggleEnabled($0) }
-                            )
-                        )
-                    }
-                } else {
-                    ConsoleActionButton("系统设置", variant: .standard, action: onOpenSystemSettings)
-                        .help("系统级或 BTM 托管项受 macOS 权限保护，点击前往「登录项与扩展」调整")
-                }
-
-                Button(action: onReveal) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 26, height: 26)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Color.primary.opacity(0.05))
-                        )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("在访达中查看配置文件：\(item.displaySourcePath)")
+
+                // Status Pill (全部开启 / 部分开启 / 全部关闭)
+                Text(group.status.label)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(group.status.color)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(group.status.color.opacity(0.13)))
+                    .frame(width: 84, alignment: .center)
+
+                // Master Toggle Switch
+                Group {
+                    if let onToggleGroup {
+                        if togglingID == group.id {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            ConsoleSwitch(
+                                isOn: Binding(
+                                    get: { group.isAnyEnabled },
+                                    set: { onToggleGroup($0) }
+                                ),
+                                disabled: togglingID != nil
+                            )
+                        }
+                    } else {
+                        ConsoleActionButton("系统设置", variant: .standard, action: onOpenSystemSettings)
+                    }
+                }
+                .frame(width: 78, alignment: .center)
+
+                // Expand Chevron + Count
+                Button(action: onToggleExpand) {
+                    HStack(spacing: 4) {
+                        Text("\(group.items.count) 项")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(width: 64, alignment: .trailing)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+
+            // Expanded Per-Plist Sub-Items
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(group.items) { item in
+                        Divider()
+                            .opacity(0.45)
+                            .padding(.leading, 56)
+
+                        HStack(alignment: .center, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2.5) {
+                                HStack(spacing: 6) {
+                                    Text(item.label)
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+
+                                    pill(item.scope.badgeTitle, color: item.scope.tintColor)
+
+                                    if item.isOrphanedBinary {
+                                        pill("程序已卸载", color: .red)
+                                    } else if item.isRunning {
+                                        pill("运行中", color: ConsoleTheme.accent)
+                                    }
+                                    if item.keepAlive && item.isEnabled && !item.isOrphanedBinary {
+                                        pill("后台保活", color: .orange)
+                                    }
+                                }
+
+                                HStack(spacing: 5) {
+                                    Text(item.displaySourcePath)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    if let exec = item.executablePath, !exec.isEmpty {
+                                        Text("→")
+                                        Text(exec)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                }
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                            if item.canMoveToTrash && item.isOrphanedBinary {
+                                ConsoleActionButton("清理残留", variant: .destructive) {
+                                    onTrash(item)
+                                }
+                            } else if item.canToggleDirectly {
+                                if togglingID == item.id {
+                                    ProgressView().controlSize(.small).frame(width: 40)
+                                } else {
+                                    ConsoleSwitch(
+                                        isOn: Binding(
+                                            get: { item.isEnabled },
+                                            set: { onToggleItem(item, $0) }
+                                        ),
+                                        disabled: togglingID != nil
+                                    )
+                                }
+                            } else {
+                                ConsoleActionButton("系统设置", variant: .standard, action: onOpenSystemSettings)
+                            }
+
+                            Button {
+                                onReveal(item.sourcePath)
+                            } label: {
+                                Image(systemName: "folder")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 24, height: 24)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .fill(Color.primary.opacity(0.05))
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .help("在访达中查看：\(item.displaySourcePath)")
+                        }
+                        .padding(.leading, 56)
+                        .padding(.trailing, 16)
+                        .padding(.vertical, 8)
+                    }
+                }
+                .background(Color.primary.opacity(0.025))
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
     }
 
     private func pill(_ text: String, color: Color) -> some View {

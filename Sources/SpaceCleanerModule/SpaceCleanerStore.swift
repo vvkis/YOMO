@@ -164,13 +164,74 @@ public enum StartupItemScope: String, CaseIterable, Identifiable, Sendable {
 }
 
 public enum StartupItemFilter: String, CaseIterable, Identifiable {
-    case all = "全部"
-    case user = "用户代理"
-    case system = "系统级"
+    case launchItems = "启动项管理"
     case loginItems = "应用内嵌"
     case orphaned = "已失效残留"
 
     public var id: String { rawValue }
+}
+
+public enum StartupGroupStatus: Sendable {
+    case allEnabled
+    case partialEnabled
+    case allDisabled
+    case orphaned
+
+    public var label: String {
+        switch self {
+        case .allEnabled: return "全部开启"
+        case .partialEnabled: return "部分开启"
+        case .allDisabled: return "全部关闭"
+        case .orphaned: return "已失效残留"
+        }
+    }
+
+    public var color: Color {
+        switch self {
+        case .allEnabled: return ConsoleTheme.accent
+        case .partialEnabled: return .blue
+        case .allDisabled: return .secondary
+        case .orphaned: return .red
+        }
+    }
+}
+
+public struct StartupAppGroup: Identifiable, Sendable {
+    public let id: String
+    public let displayName: String
+    public let appBundlePath: String?
+    public let items: [StartupItemInfo]
+
+    public var enabledCount: Int {
+        items.filter(\.isEnabled).count
+    }
+
+    public var isAnyEnabled: Bool {
+        enabledCount > 0
+    }
+
+    public var isAllOrphaned: Bool {
+        !items.isEmpty && items.allSatisfy(\.isOrphanedBinary)
+    }
+
+    public var hasRunningItem: Bool {
+        items.contains(where: \.isRunning)
+    }
+
+    public var requiresAdminForToggle: Bool {
+        items.contains { $0.scope == .globalLaunchDaemon }
+    }
+
+    public var canToggleGroup: Bool {
+        items.contains(where: \.canToggleDirectly)
+    }
+
+    public var status: StartupGroupStatus {
+        if isAllOrphaned { return .orphaned }
+        if enabledCount == 0 { return .allDisabled }
+        if enabledCount == items.count { return .allEnabled }
+        return .partialEnabled
+    }
 }
 
 public struct StartupItemInfo: Identifiable, Hashable, Sendable {
@@ -395,7 +456,8 @@ public final class SpaceCleanerStore: ObservableObject {
 
     // Startup / Login Items Inspector state (on-demand, zero background polling)
     @Published public var consoleTab: SpaceCleanerConsoleTab = .cleanup
-    @Published public var startupFilter: StartupItemFilter = .all
+    @Published public var startupFilter: StartupItemFilter = .launchItems
+    @Published public var expandedStartupGroups: Set<String> = []
     @Published public private(set) var startupItems: [StartupItemInfo] = []
     @Published public private(set) var isScanningStartupItems: Bool = false
     @Published public private(set) var hasScannedStartupItems: Bool = false
@@ -606,37 +668,76 @@ public final class SpaceCleanerStore: ObservableObject {
         }
     }
 
-    // MARK: - Startup Items Inspector (Zero Subprocess, On-Demand)
+    // MARK: - Startup Items Inspector (Zero Subprocess Scan, App-Grouped Lemon-Style Management)
 
-    public var filteredStartupItems: [StartupItemInfo] {
+    public var launchdItems: [StartupItemInfo] {
+        startupItems.filter { $0.scope != .appLoginItem }
+    }
+
+    public var startupAppGroups: [StartupAppGroup] {
+        let baseItems: [StartupItemInfo]
         switch startupFilter {
-        case .all:
-            return startupItems
-        case .user:
-            return startupItems.filter { $0.scope == .userLaunchAgent }
-        case .system:
-            return startupItems.filter { $0.scope == .globalLaunchAgent || $0.scope == .globalLaunchDaemon }
+        case .launchItems:
+            baseItems = startupItems.filter { $0.scope != .appLoginItem }
         case .loginItems:
-            return startupItems.filter { $0.scope == .appLoginItem }
+            baseItems = startupItems.filter { $0.scope == .appLoginItem }
         case .orphaned:
-            return startupItems.filter(\.isOrphanedBinary)
+            baseItems = startupItems.filter(\.isOrphanedBinary)
+        }
+
+        var grouped: [String: [StartupItemInfo]] = [:]
+        var metaByKey: [String: (name: String, appPath: String?)] = [:]
+
+        for item in baseItems {
+            let key = item.displayName.lowercased()
+            grouped[key, default: []].append(item)
+            if metaByKey[key] == nil || (metaByKey[key]?.appPath == nil && item.appBundlePath != nil) {
+                metaByKey[key] = (item.displayName, item.appBundlePath ?? metaByKey[key]?.appPath)
+            }
+        }
+
+        return grouped.map { key, list in
+            let meta = metaByKey[key] ?? (list[0].displayName, list[0].appBundlePath)
+            let sortedList = list.sorted { a, b in
+                if a.scope != b.scope { return a.scope.rawValue < b.scope.rawValue }
+                return a.label < b.label
+            }
+            return StartupAppGroup(
+                id: key,
+                displayName: meta.name,
+                appBundlePath: meta.appPath,
+                items: sortedList
+            )
+        }.sorted { a, b in
+            if a.isAllOrphaned != b.isAllOrphaned { return a.isAllOrphaned }
+            if a.isAnyEnabled != b.isAnyEnabled { return a.isAnyEnabled }
+            if a.items.count != b.items.count { return a.items.count > b.items.count }
+            return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
+        }
+    }
+
+    public func toggleStartupGroupExpanded(_ groupID: String) {
+        if expandedStartupGroups.contains(groupID) {
+            expandedStartupGroups.remove(groupID)
+        } else {
+            expandedStartupGroups.insert(groupID)
         }
     }
 
     public var enabledStartupCount: Int {
-        startupItems.filter(\.isEnabled).count
+        launchdItems.filter(\.isEnabled).count
     }
 
     public var runningStartupCount: Int {
-        startupItems.filter(\.isRunning).count
+        launchdItems.filter(\.isRunning).count
     }
 
     public var orphanedStartupCount: Int {
         startupItems.filter(\.isOrphanedBinary).count
     }
 
-    public func appIcon(for item: StartupItemInfo) -> NSImage? {
-        guard let appPath = item.appBundlePath, !appPath.isEmpty else { return nil }
+    public func appIcon(forPath appPath: String?) -> NSImage? {
+        guard let appPath, !appPath.isEmpty else { return nil }
         let key = appPath as NSString
         if let cached = startupIconCache.object(forKey: key) {
             return cached
@@ -662,18 +763,37 @@ public final class SpaceCleanerStore: ObservableObject {
         }
     }
 
-    /// Directly toggles a user-level LaunchAgent (~/Library/LaunchAgents) ON or OFF without root privileges.
-    /// Uses a reversible disabled vault + explicit launchctl enable/disable & bootstrap/bootout so changes take effect immediately and survive reboot.
-    public func setUserStartupItemEnabled(_ item: StartupItemInfo, enabled: Bool) {
-        guard item.canToggleDirectly, item.scope == .userLaunchAgent, togglingStartupItemID == nil else {
-            return
-        }
+    /// Toggles a single launchd startup item ON or OFF (User LaunchAgents need zero password;
+    /// System LaunchDaemons use macOS's native on-demand Touch ID / admin prompt with zero background root daemon).
+    public func setStartupItemEnabled(_ item: StartupItemInfo, enabled: Bool) {
+        guard item.canToggleDirectly, togglingStartupItemID == nil else { return }
         togglingStartupItemID = item.id
         let itemCopy = item
         let runningSnap = Self.snapshotRunningProcesses()
 
         workQueue.async { [weak self] in
-            let outcome = SpaceCleanerEngine.toggleUserLaunchAgent(itemCopy, enabled: enabled)
+            let outcome = SpaceCleanerEngine.toggleStartupItems([itemCopy], enabled: enabled, groupLabel: itemCopy.displayName)
+            let updatedItems = SpaceCleanerEngine.scanStartupItems(runningSnap: runningSnap)
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.togglingStartupItemID = nil
+                self.startupItems = updatedItems
+                self.startupStatusMessage = outcome.message
+            }
+        }
+    }
+
+    /// Toggles ALL launchd items in an App Group in one action (batching any system daemons into a single Touch ID / admin prompt).
+    public func setStartupGroupEnabled(_ group: StartupAppGroup, enabled: Bool) {
+        let toggleable = group.items.filter(\.canToggleDirectly)
+        guard !toggleable.isEmpty, togglingStartupItemID == nil else { return }
+        togglingStartupItemID = group.id
+        let groupName = group.displayName
+        let runningSnap = Self.snapshotRunningProcesses()
+
+        workQueue.async { [weak self] in
+            let outcome = SpaceCleanerEngine.toggleStartupItems(toggleable, enabled: enabled, groupLabel: groupName)
             let updatedItems = SpaceCleanerEngine.scanStartupItems(runningSnap: runningSnap)
 
             Task { @MainActor [weak self] in
@@ -2070,8 +2190,8 @@ private enum SpaceCleanerEngine {
         let plistDirs: [(path: String, scope: StartupItemScope, canToggle: Bool, canTrash: Bool, isVault: Bool)] = [
             (userAgentsDir, .userLaunchAgent, true, true, false),
             (vaultDir, .userLaunchAgent, true, true, true),
-            ("/Library/LaunchAgents", .globalLaunchAgent, false, false, false),
-            ("/Library/LaunchDaemons", .globalLaunchDaemon, false, false, false)
+            ("/Library/LaunchAgents", .globalLaunchAgent, true, false, false),
+            ("/Library/LaunchDaemons", .globalLaunchDaemon, true, false, false)
         ]
 
         var seenLabelsInUserScope = Set<String>()
@@ -2114,11 +2234,21 @@ private enum SpaceCleanerEngine {
                 }()
                 let disabledInPlist = (plist["Disabled"] as? Bool) ?? false
 
-                let overrides = (dirSpec.scope == .userLaunchAgent) ? userDisabledOverrides : systemDisabledOverrides
+                // Both ~/Library/LaunchAgents AND /Library/LaunchAgents run in gui/<uid> and use disabled.<uid>.plist!
+                // Only /Library/LaunchDaemons use the system-wide disabled.plist.
                 let isEnabled: Bool = {
                     if dirSpec.isVault { return false }
-                    if let ov = overrides[label] { return !ov }
-                    return !disabledInPlist
+                    switch dirSpec.scope {
+                    case .userLaunchAgent, .globalLaunchAgent:
+                        if let ov = userDisabledOverrides[label] { return !ov }
+                        if let ov = systemDisabledOverrides[label] { return !ov }
+                        return !disabledInPlist
+                    case .globalLaunchDaemon:
+                        if let ov = systemDisabledOverrides[label] { return !ov }
+                        return !disabledInPlist
+                    case .appLoginItem:
+                        return !disabledInPlist
+                    }
                 }()
 
                 let isOrphaned: Bool = {
@@ -2226,6 +2356,102 @@ private enum SpaceCleanerEngine {
         }
     }
 
+    /// Explicit user-triggered toggle for one or more launchd items (batched so multi-daemon apps prompt admin at most once).
+    /// - User LaunchAgents (`~/Library/LaunchAgents`): zero password, reversible disabled vault + `launchctl` in `gui/<uid>`.
+    /// - Global LaunchAgents (`/Library/LaunchAgents`): `launchctl enable/disable` + `bootout/bootstrap` in `gui/<uid>` (zero password).
+    /// - Global LaunchDaemons (`/Library/LaunchDaemons`): macOS native Touch ID / admin sheet via SecurityAgent (zero permanent root daemon).
+    static func toggleStartupItems(_ items: [StartupItemInfo], enabled: Bool, groupLabel: String) -> (ok: Bool, message: String) {
+        let userAgents = items.filter { $0.scope == .userLaunchAgent }
+        let globalAgents = items.filter { $0.scope == .globalLaunchAgent }
+        let systemDaemons = items.filter { $0.scope == .globalLaunchDaemon }
+
+        let uid = getuid()
+        let guiDomain = "gui/\(uid)"
+        var errors: [String] = []
+
+        // 1. User-owned LaunchAgents (zero password)
+        for item in userAgents {
+            let res = toggleUserLaunchAgent(item, enabled: enabled)
+            if !res.ok {
+                errors.append(res.message)
+            }
+        }
+
+        // 2. Global LaunchAgents run inside gui/<uid> — launchctl enable/disable & bootout/bootstrap work directly for current user!
+        for item in globalAgents {
+            guard isSafeLaunchdLabel(item.label) else { continue }
+            if enabled {
+                _ = runLaunchctl(["enable", "\(guiDomain)/\(item.label)"])
+                _ = runLaunchctl(["bootstrap", guiDomain, item.sourcePath])
+            } else {
+                _ = runLaunchctl(["disable", "\(guiDomain)/\(item.label)"])
+                _ = runLaunchctl(["bootout", guiDomain, item.sourcePath])
+            }
+        }
+
+        // 3. System LaunchDaemons (/Library/LaunchDaemons) require one-time macOS native admin authorization
+        if !systemDaemons.isEmpty {
+            var commands: [String] = []
+            for item in systemDaemons {
+                guard isSafeLaunchdLabel(item.label),
+                      item.sourcePath.hasPrefix("/Library/LaunchDaemons/"),
+                      item.sourcePath.hasSuffix(".plist") else {
+                    continue
+                }
+                let qLabel = shellSingleQuoted("system/\(item.label)")
+                let qPath = shellSingleQuoted(item.sourcePath)
+                if enabled {
+                    commands.append("/bin/launchctl enable \(qLabel) || true")
+                    commands.append("/bin/launchctl bootstrap system \(qPath) || true")
+                } else {
+                    commands.append("/bin/launchctl disable \(qLabel) || true")
+                    commands.append("/bin/launchctl bootout system \(qPath) || true")
+                }
+            }
+            if !commands.isEmpty {
+                let scriptBody = commands.joined(separator: "; ")
+                let adminOK = runWithNativeAdminPrompt(shellCommand: scriptBody)
+                if !adminOK {
+                    return (false, "已取消或未完成系统管理员授权，「\(groupLabel)」的系统守护状态未变更")
+                }
+            }
+        }
+
+        if let firstErr = errors.first {
+            return (false, firstErr)
+        }
+        let actionText = enabled ? "开启" : "关闭"
+        return (true, "已\(actionText)「\(groupLabel)」开机启动项（共 \(items.count) 项）")
+    }
+
+    private static func isSafeLaunchdLabel(_ label: String) -> Bool {
+        guard !label.isEmpty, label.count <= 200 else { return false }
+        return label.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_") }
+    }
+
+    private static func shellSingleQuoted(_ raw: String) -> String {
+        "'" + raw.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private static func runWithNativeAdminPrompt(shellCommand: String) -> Bool {
+        let escaped = shellCommand
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let appleScript = "do shell script \"\(escaped)\" with administrator privileges"
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", appleScript]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            return proc.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
     /// Explicit user-triggered toggle for a user-owned LaunchAgent (never called in polling).
     static func toggleUserLaunchAgent(_ item: StartupItemInfo, enabled: Bool) -> (ok: Bool, message: String) {
         let fm = FileManager.default
@@ -2314,12 +2540,30 @@ private enum SpaceCleanerEngine {
         if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: label) {
             return (appURL.deletingPathExtension().lastPathComponent, appURL.standardizedFileURL.path)
         }
+        // Try progressively shorter bundle ID prefixes (e.g. com.tencent.Lemon.uninstall -> com.tencent.Lemon)
+        let parts = label.split(separator: ".")
+        if parts.count >= 3 {
+            for len in stride(from: parts.count - 1, through: 2, by: -1) {
+                let prefix = parts.prefix(len).joined(separator: ".")
+                if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: prefix) {
+                    return (appURL.deletingPathExtension().lastPathComponent, appURL.standardizedFileURL.path)
+                }
+            }
+        }
         if let exec = executablePath {
             let comps = URL(fileURLWithPath: exec).pathComponents
             if let idx = comps.firstIndex(where: { $0.hasSuffix(".app") }) {
                 let appPath = NSString.path(withComponents: Array(comps.prefix(idx + 1)))
                 let name = String(comps[idx].dropLast(4))
                 return (name, FileManager.default.fileExists(atPath: appPath) ? appPath : nil)
+            }
+            // Special case for helpers living under /Library/Application Support/Lemon/ etc.
+            let lowerLabel = label.lowercased()
+            if lowerLabel.hasPrefix("com.tencent.lemon") {
+                let lemonApp = "/Applications/Tencent Lemon.app"
+                if FileManager.default.fileExists(atPath: lemonApp) {
+                    return ("Tencent Lemon", lemonApp)
+                }
             }
             let base = URL(fileURLWithPath: exec).lastPathComponent
             if !base.isEmpty { return (base, nil) }
