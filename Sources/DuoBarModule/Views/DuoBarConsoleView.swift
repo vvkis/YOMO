@@ -50,30 +50,6 @@ public struct DuoBarConsoleView: View {
                         ConsoleSwitch(isOn: $prefs.showBatteryPercentInRing)
                     }
                 }
-
-                ConsoleRowDivider()
-
-                ConsoleRow(
-                    title: "菜单栏靠右置顶",
-                    subtitle: "优先停靠在第三方图标最右侧（靠近控制中心），不易被其他应用挤到左侧或刘海后；关闭后可按住 ⌘ 自由拖动"
-                ) {
-                    HStack(spacing: 10) {
-                        if prefs.pinStatusItemRight {
-                            ConsoleActionButton("移到最右") {
-                                store.reapplyStatusItemPosition()
-                            }
-                        }
-                        ConsoleSwitch(isOn: Binding(
-                            get: { prefs.pinStatusItemRight },
-                            set: { enabled in
-                                prefs.pinStatusItemRight = enabled
-                                if enabled {
-                                    store.reapplyStatusItemPosition()
-                                }
-                            }
-                        ))
-                    }
-                }
             }
 
             // Card 3: Refresh & Startup

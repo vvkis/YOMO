@@ -42,10 +42,8 @@ private struct BadgeRenderKey: Equatable {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private static let statusItemBaseAutosaveName = "YOMOStatusItem"
-    private static let statusItemEpochDefaultsKey = "yomo.statusItemSlotEpoch"
+    private static let statusItemAutosaveName = "YOMO.MainStatusItem"
     private var statusItem: NSStatusItem!
-    private var statusItemGeneration: UInt64 = 0
     private var panel: GlassPopoverPanel!
     private var consoleWindow: NSWindow?
     private var consoleCloseObserver: NSObjectProtocol?
@@ -86,8 +84,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.duoBarStore.refreshLaunchAtLoginState()
         }
 
-        // 1. Setup single Menu Bar Status Item (persisted autosaveName + optional right-edge priority)
-        configureStatusItem(forceRightPosition: duoBarStore.prefs.pinStatusItemRight)
+        // 1. Setup single Menu Bar Status Item (default to rightmost third-party slot on first launch;
+        //    subsequent manual ⌘-drag positions are persisted automatically by macOS via autosaveName)
+        let positionKey = "NSStatusItem Preferred Position \(Self.statusItemAutosaveName)"
+        if UserDefaults.standard.object(forKey: positionKey) == nil {
+            UserDefaults.standard.set(178.0, forKey: positionKey)
+            UserDefaults.standard.set(178.0, forKey: "NSStatusItem Preferred Position Item-0")
+        }
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.autosaveName = Self.statusItemAutosaveName
+        if let button = statusItem.button {
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleNone
+            button.target = self
+            button.action = #selector(togglePanel(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            button.toolTip = "YOMO — You Only Menu Once"
+        }
 
         // IMPORTANT: DO NOT observe `button.effectiveAppearance` via KVO.
         // On dual-display macOS 27, MenuBarAgent repeatedly flips effectiveAppearance across displays,
@@ -149,9 +162,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         duoBarStore.onStatusBarNeedsRedraw = { [weak self] in
             self?.redrawStatusBadge()
         }
-        duoBarStore.onStatusItemPositionRequested = { [weak self] in
-            self?.configureStatusItem(forceRightPosition: true)
-        }
         displayStore.onPerformDisplaySwitch = { [weak self] performSwitch in
             if let panel = self?.panel {
                 panel.beginDisplayTransition(performSwitch: performSwitch)
@@ -207,68 +217,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(windowMenuItem)
 
         NSApp.mainMenu = mainMenu
-    }
-
-    private func configureStatusItem(forceRightPosition: Bool) {
-        statusItemGeneration &+= 1
-        let gen = statusItemGeneration
-
-        let hadExisting = (statusItem != nil)
-        if let existing = statusItem {
-            if panel?.isEffectivelyVisible == true {
-                panel.dismissAnimated()
-            }
-            existing.autosaveName = nil
-            NSStatusBar.system.removeStatusItem(existing)
-            statusItem = nil
-        }
-
-        let createItem: @MainActor @Sendable () -> Void = { [weak self] in
-            guard let self, self.statusItemGeneration == gen else { return }
-
-            let defaults = UserDefaults.standard
-            var epoch = max(1, defaults.integer(forKey: Self.statusItemEpochDefaultsKey))
-
-            if forceRightPosition {
-                // macOS MenuBarAgent caches manual ⌘-drag coordinates per (bundleID, autosaveName) inside its daemon.
-                // Rotating to a fresh autosaveName epoch clears stale drag history so MenuBarAgent immediately honors
-                // our 212pt preferred position (rightmost third-party slot, immediately left of Spotlight) without restart.
-                defaults.removeObject(forKey: "NSStatusItem Preferred Position \(Self.statusItemBaseAutosaveName)")
-                defaults.removeObject(forKey: "NSStatusItem Preferred Position \(Self.statusItemBaseAutosaveName)-\(epoch)")
-                epoch += 1
-                defaults.set(epoch, forKey: Self.statusItemEpochDefaultsKey)
-            }
-
-            let activeAutosaveName = "\(Self.statusItemBaseAutosaveName)-\(epoch)"
-            if forceRightPosition {
-                // Calibrated right past Clock + Control Center + Spotlight (~174pt) and ahead of all third-party apps
-                let targetOffset = 178.0
-                defaults.set(targetOffset, forKey: "NSStatusItem Preferred Position \(activeAutosaveName)")
-                defaults.set(targetOffset, forKey: "NSStatusItem Preferred Position Item-0")
-                CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication)
-            }
-
-            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            item.autosaveName = activeAutosaveName
-            if let button = item.button {
-                button.imagePosition = .imageOnly
-                button.imageScaling = .scaleNone
-                button.target = self
-                button.action = #selector(self.togglePanel(_:))
-                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-                button.toolTip = "YOMO — You Only Menu Once"
-            }
-            self.statusItem = item
-            self.lastRenderKey = nil
-            self.redrawStatusBadge(force: true)
-        }
-
-        if hadExisting {
-            // Yield briefly so MenuBarAgent finishes tearing down the old status item before creating the new epoch slot.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: createItem)
-        } else {
-            createItem()
-        }
     }
 
     @objc private func handleSystemThemeChanged() {

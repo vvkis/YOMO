@@ -322,9 +322,6 @@ public final class AppPreferences: ObservableObject {
     @AppStorage("refreshInterval") public var refreshInterval: Double = 2.0 {
         willSet { objectWillChange.send() }
     }
-    @AppStorage("pinStatusItemRight") public var pinStatusItemRight: Bool = true {
-        willSet { objectWillChange.send() }
-    }
 
     public init() {}
 
