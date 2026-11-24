@@ -215,10 +215,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if forceRightPosition {
             // AppKit sorts NSStatusItem from right to left by ascending "NSStatusItem Preferred Position <autosaveName>".
-            // Setting a position right at the left boundary of macOS system icons (Clock + Control Center + Spotlight
-            // + any enabled Control Center menu extras) places YOMO as the rightmost third-party item WITHOUT
-            // jumping ahead of system icons like Spotlight or newly enabled system controls.
-            let targetOffset = computeThirdPartyRightmostPosition()
+            // 212pt sits cleanly to the left of macOS's default right-side system cluster (Clock + Control Center + Spotlight)
+            // and to the right of all third-party apps.
+            let targetOffset = 212.0
             UserDefaults.standard.set(targetOffset, forKey: "NSStatusItem Preferred Position \(statusItemAutosaveName)")
             UserDefaults.standard.set(targetOffset, forKey: "NSStatusItem Preferred Position Item-0")
         }
@@ -236,68 +235,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = item
         lastRenderKey = nil
         redrawStatusBadge(force: true)
-    }
-
-    /// Estimates the right-edge offset (in points) of macOS's built-in system menu bar cluster
-    /// (Clock + Control Center + Spotlight + enabled Control Center extras) using read-only standard
-    /// preference domains so YOMO lands immediately to the LEFT of system icons and to the RIGHT of
-    /// all third-party apps.
-    private func computeThirdPartyRightmostPosition() -> Double {
-        // 1. Clock width (rightmost pinned system item)
-        var offset: Double = 64.0 // time + right margin
-        if let clockDefaults = UserDefaults(suiteName: "com.apple.menuextra.clock") {
-            let showDate = clockDefaults.object(forKey: "ShowDate") as? Int ?? 0
-            if showDate != 2 {
-                offset += 44.0
-            }
-            let showDayOfWeek = clockDefaults.object(forKey: "ShowDayOfWeek") as? Bool ?? true
-            if showDayOfWeek {
-                offset += 30.0
-            }
-            let showSeconds = clockDefaults.object(forKey: "ShowSeconds") as? Bool ?? false
-            if showSeconds {
-                offset += 18.0
-            }
-        } else {
-            offset += 74.0
-        }
-
-        // 2. Control Center icon (always shown)
-        offset += 34.0
-
-        // 3. Spotlight icon (shown unless explicitly disabled)
-        let spotlightVisible = UserDefaults(suiteName: "com.apple.Spotlight")?
-            .object(forKey: "NSStatusItem VisibleCC Item-0") as? Bool ?? true
-        if spotlightVisible {
-            offset += 34.0
-        }
-
-        // 4. Optional Control Center system icons enabled in ByHost preferences
-        // Bit 2 (values 2 / 18) indicates "Show in Menu Bar"; value 8 indicates "Don't Show in Menu Bar".
-        let byHostDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Preferences/ByHost", isDirectory: true)
-        if let files = try? FileManager.default.contentsOfDirectory(at: byHostDir, includingPropertiesForKeys: nil),
-           let ccURL = files.first(where: {
-               $0.lastPathComponent.hasPrefix("com.apple.controlcenter.") && $0.pathExtension == "plist"
-           }),
-           let dict = NSDictionary(contentsOf: ccURL) as? [String: Any] {
-            let systemKeys = [
-                "WiFi", "Bluetooth", "AirDrop", "FocusModes", "StageManager",
-                "ScreenMirroring", "Display", "Sound", "NowPlaying",
-                "AccessibilityShortcuts", "Battery", "Hearing",
-                "FastUserSwitching", "KeyboardBrightness", "TimeMachine",
-                "Weather", "Siri", "LiveCaptions"
-            ]
-            let showBatteryPct = (dict["BatteryShowPercentage"] as? Bool) ?? false
-            for key in systemKeys {
-                if let rawVal = dict[key] as? Int, (rawVal & 2) != 0 {
-                    offset += (key == "Battery" && showBatteryPct) ? 54.0 : 34.0
-                }
-            }
-        }
-
-        // Small buffer past the leftmost system icon so YOMO stays strictly on the third-party side
-        return offset + 6.0
     }
 
     @objc private func handleSystemThemeChanged() {
