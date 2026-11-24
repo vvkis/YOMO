@@ -6,9 +6,9 @@ public enum StatusBadgeRenderer {
     /// Left ring occupies x: 0.4 ... 22.0 (center 11.2, radius 9.6, stroke 2.35)
     private static let ringCenterX: CGFloat = 11.2
     private static let ringRadius: CGFloat = 9.6
-    private static let capsuleTextX: CGFloat = 23.6
-    private static let capsuleArrowCenterOffsetX: CGFloat = 2.0
-    private static let capsuleSpeedTextOffsetX: CGFloat = 5.4
+    private static let capsuleTextX: CGFloat = 24.4
+    private static let capsuleArrowCenterOffsetX: CGFloat = 2.2
+    private static let capsuleSpeedTextOffsetX: CGFloat = 6.0
 
     private static let topValueFont = NSFont.monospacedDigitSystemFont(ofSize: 10.8, weight: .bold)
     private static let topPercentFont = NSFont.systemFont(ofSize: 8.8, weight: .bold)
@@ -47,7 +47,7 @@ public enum StatusBadgeRenderer {
             attributes: [.font: bottomValueFont, .kern: -0.2]
         )
         baseBot.append(NSAttributedString(
-            string: "K",
+            string: "\u{2009}K",
             attributes: [.font: bottomUnitFont]
         ))
         let baseTextWidth = max(baseTop.size().width, capsuleSpeedTextOffsetX + baseBot.size().width)
@@ -151,7 +151,7 @@ public enum StatusBadgeRenderer {
                 ]
             )
             botAttr.append(NSAttributedString(
-                string: unitText,
+                string: "\u{2009}\(unitText)",
                 attributes: [
                     .font: bottomUnitFont,
                     .foregroundColor: fg.withAlphaComponent(0.84)
