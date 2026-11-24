@@ -30,28 +30,28 @@ public enum StatusBadgeRenderer {
         return NSFont(descriptor: desc, size: size) ?? base
     }
 
-    /// Compact baseline width matching normal steady-state text ("99%" / "↓0.0K") so idle badges have
-    /// zero dead trailing whitespace while rare wider bursts ("100%" / "↓999M") expand cleanly without clipping.
-    private static let compactCapsuleBaseWidth: CGFloat = {
-        let baseTop = NSMutableAttributedString(
-            string: "99",
+    /// Invariant compact width reserving worst-case bounds ("100%" / "↓999 M") so the menu bar
+    /// stays rock-steady with zero horizontal jitter even during high-speed bursts.
+    private static let fixedCapsuleWidth: CGFloat = {
+        let maxTop = NSMutableAttributedString(
+            string: "100",
             attributes: [.font: topValueFont, .kern: -0.2]
         )
-        baseTop.append(NSAttributedString(
+        maxTop.append(NSAttributedString(
             string: "%",
             attributes: [.font: topPercentFont]
         ))
 
-        let baseBot = NSMutableAttributedString(
-            string: "0.0",
+        let maxBot = NSMutableAttributedString(
+            string: "999",
             attributes: [.font: bottomValueFont, .kern: -0.2]
         )
-        baseBot.append(NSAttributedString(
-            string: "\u{2009}K",
+        maxBot.append(NSAttributedString(
+            string: "\u{2009}M",
             attributes: [.font: bottomUnitFont]
         ))
-        let baseTextWidth = max(baseTop.size().width, capsuleSpeedTextOffsetX + baseBot.size().width)
-        return ceil(capsuleTextX + baseTextWidth)
+        let maxTextWidth = max(maxTop.size().width, capsuleSpeedTextOffsetX + maxBot.size().width)
+        return ceil(capsuleTextX + maxTextWidth)
     }()
 
     public static func render(
@@ -160,8 +160,7 @@ public enum StatusBadgeRenderer {
 
             capsuleTopAttr = topAttr
             capsuleBotAttr = botAttr
-            let neededTextWidth = max(topAttr.size().width, capsuleSpeedTextOffsetX + botAttr.size().width)
-            width = max(compactCapsuleBaseWidth, ceil(capsuleTextX + neededTextWidth))
+            width = fixedCapsuleWidth
         } else {
             width = 22.5
         }
