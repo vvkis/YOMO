@@ -369,8 +369,13 @@ YOMO 采用纯 SwiftPM 工程组织，不依赖仅随完整 Xcode 分发的组�
 <details>
 <summary><b>4. 如何完全卸载 YOMO？</b></summary>
 <br />
-先在 YOMO 中关闭「开机自动启动」并退出应用，然后删除 <code>/Applications/YOMO.app</code> 即可。如需同时清理本地偏好设置，可运行：
-<pre><code>defaults delete com.yomo.suite 2>/dev/null || true</code></pre>
+先在 YOMO 中关闭「开机自动启动」并退出应用，然后删除 <code>/Applications/YOMO.app</code>。如需同时彻底清理偏好设置、历史剪贴板数据与全部系统缓存，可运行：
+<pre><code>defaults delete com.yomo.suite 2&gt;/dev/null || true
+rm -rf \
+  "$HOME/Library/Application Support/YOMO" \
+  "$HOME/Library/Caches/com.yomo.suite" \
+  "$HOME/Library/HTTPStorages/com.yomo.suite" \
+  "$HOME/Library/Saved Application State/com.yomo.suite.savedState"</code></pre>
 </details>
 
 ---

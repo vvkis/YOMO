@@ -369,8 +369,13 @@ Yes. Turning off a module in <b>Hub Console → Modules</b> hides it from the po
 <details>
 <summary><b>4. How do I completely uninstall YOMO?</b></summary>
 <br />
-Disable <b>Launch at Login</b> in YOMO, quit the app, and move <code>/Applications/YOMO.app</code> to the Trash. To remove saved preferences as well:
-<pre><code>defaults delete com.yomo.suite 2>/dev/null || true</code></pre>
+Disable <b>Launch at Login</b> in YOMO, quit the app, and move <code>/Applications/YOMO.app</code> to the Trash. To completely remove preferences, clipboard history data, and all caches as well:
+<pre><code>defaults delete com.yomo.suite 2&gt;/dev/null || true
+rm -rf \
+  "$HOME/Library/Application Support/YOMO" \
+  "$HOME/Library/Caches/com.yomo.suite" \
+  "$HOME/Library/HTTPStorages/com.yomo.suite" \
+  "$HOME/Library/Saved Application State/com.yomo.suite.savedState"</code></pre>
 </details>
 
 ---
