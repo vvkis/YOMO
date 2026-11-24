@@ -273,9 +273,9 @@ struct OverviewView: View {
                                         // In normal overview mode, allow direct drag-to-reorder on all tiles;
                                         // on the volume tile, reserve the lower slider region for volume scrubbing
                                         // and allow dragging from the top header bar (or anywhere in layout-edit mode).
-                                        if !isEditing && tile == .volume {
+                                        if !isEditing && tile == .volume && dragState.draggingTile != tile {
                                             let localStartY = value.startLocation.y - rect.minY
-                                            guard localStartY < 26 else { return }
+                                            guard localStartY < 27 else { return }
                                         }
                                         if dragState.draggingTile != tile {
                                             moduleSettings.commitPackedVisualOrder(layout.visualOrder, persist: false)
@@ -318,7 +318,7 @@ struct OverviewView: View {
                                             dragState.dragTranslation = .zero
                                         }
                                     },
-                                including: isEditing ? .all : (tile == .volume ? .none : .all)
+                                including: .all
                             )
                             .contextMenu {
                                 Button(isEditing ? "完成排版" : "进入排版页面（调整组件大小）") {

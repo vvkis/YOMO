@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import CoreKit
 import DuoBarModule
@@ -56,7 +57,36 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
 
 @MainActor
 final class HubConsoleViewModel: ObservableObject {
+    static let defaultSidebarWidth: CGFloat = 196
+    static let minSidebarWidth: CGFloat = 160
+    static let maxSidebarWidth: CGFloat = 280
+    private static let sidebarWidthKey = "console.sidebarWidth"
+
     @Published var selectedSection: ConsoleSection = .dashboard
+    @Published var sidebarWidth: CGFloat
+
+    init() {
+        let saved = UserDefaults.standard.double(forKey: Self.sidebarWidthKey)
+        if saved >= Self.minSidebarWidth && saved <= Self.maxSidebarWidth {
+            self.sidebarWidth = CGFloat(saved)
+        } else {
+            self.sidebarWidth = Self.defaultSidebarWidth
+        }
+    }
+
+    func setSidebarWidth(_ raw: CGFloat, persist: Bool = false) {
+        let clamped = min(Self.maxSidebarWidth, max(Self.minSidebarWidth, round(raw)))
+        if sidebarWidth != clamped {
+            sidebarWidth = clamped
+        }
+        if persist {
+            UserDefaults.standard.set(Double(clamped), forKey: Self.sidebarWidthKey)
+        }
+    }
+
+    func resetSidebarWidth() {
+        setSidebarWidth(Self.defaultSidebarWidth, persist: true)
+    }
 }
 
 struct HubConsoleView: View {
@@ -105,7 +135,7 @@ struct HubConsoleView: View {
             }
             .padding(.horizontal, 10)
             .padding(.top, 8)
-            .frame(width: 196)
+            .frame(width: viewModel.sidebarWidth)
             .frame(maxHeight: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -118,6 +148,22 @@ struct HubConsoleView: View {
             )
             .padding(.leading, 10)
             .padding(.vertical, 10)
+
+            // Draggable splitter between left sidebar and right detail canvas (persisted automatically)
+            SidebarSplitHandle(
+                currentWidth: { viewModel.sidebarWidth },
+                onDragWidth: { newWidth in
+                    viewModel.setSidebarWidth(newWidth, persist: false)
+                },
+                onEndWidth: { finalWidth in
+                    viewModel.setSidebarWidth(finalWidth, persist: true)
+                },
+                onReset: {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        viewModel.resetSidebarWidth()
+                    }
+                }
+            )
 
             // Right Detail Canvas
             Group {
@@ -323,6 +369,88 @@ private struct DashboardHomeView: View {
             // Software Update Card (GitHub Releases + SHA-256 + In-Place Upgrade preserving all settings)
             AppUpdateCard(store: updateStore)
         }
+    }
+}
+
+private final class SidebarSplitDragState: ObservableObject {
+    @Published var isHovering: Bool = false
+    @Published var isDragging: Bool = false
+    var dragStartWidth: CGFloat? = nil
+    var cursorPushed: Bool = false
+
+    func updateCursor() {
+        let shouldShow = isHovering || isDragging
+        if shouldShow && !cursorPushed {
+            NSCursor.resizeLeftRight.push()
+            cursorPushed = true
+        } else if !shouldShow && cursorPushed {
+            NSCursor.pop()
+            cursorPushed = false
+        }
+    }
+
+    func cleanupCursor() {
+        if cursorPushed {
+            NSCursor.pop()
+            cursorPushed = false
+        }
+    }
+}
+
+private struct SidebarSplitHandle: View {
+    let currentWidth: () -> CGFloat
+    let onDragWidth: (CGFloat) -> Void
+    let onEndWidth: (CGFloat) -> Void
+    let onReset: () -> Void
+
+    @StateObject private var drag = SidebarSplitDragState()
+
+    var body: some View {
+        ZStack {
+            Color.clear
+            Capsule()
+                .fill(
+                    drag.isDragging
+                        ? ConsoleTheme.accent.opacity(0.75)
+                        : (drag.isHovering ? Color.primary.opacity(0.24) : Color.clear)
+                )
+                .frame(width: 3, height: drag.isDragging ? 48 : 34)
+                .animation(.easeOut(duration: 0.14), value: drag.isHovering)
+                .animation(.easeOut(duration: 0.14), value: drag.isDragging)
+        }
+        .frame(width: 10)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            drag.isHovering = hovering
+            drag.updateCursor()
+        }
+        .onDisappear {
+            drag.cleanupCursor()
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    if drag.dragStartWidth == nil {
+                        drag.dragStartWidth = currentWidth()
+                        drag.isDragging = true
+                        drag.updateCursor()
+                    }
+                    let start = drag.dragStartWidth ?? currentWidth()
+                    onDragWidth(start + value.translation.width)
+                }
+                .onEnded { value in
+                    let start = drag.dragStartWidth ?? currentWidth()
+                    drag.dragStartWidth = nil
+                    drag.isDragging = false
+                    drag.updateCursor()
+                    onEndWidth(start + value.translation.width)
+                }
+        )
+        .onTapGesture(count: 2) {
+            onReset()
+        }
+        .help("左右拖动调节侧边栏宽度（双击恢复默认）")
     }
 }
 

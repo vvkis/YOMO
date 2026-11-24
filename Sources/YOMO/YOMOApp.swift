@@ -413,7 +413,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             win.title = "YOMO 控制台"
             win.isReleasedWhenClosed = false
             win.contentViewController = NSHostingController(rootView: contentView)
-            win.center()
+            let frameAutosaveName = "YOMOConsoleWindowFrame"
+            if !win.setFrameUsingName(frameAutosaveName) {
+                win.center()
+            }
+            win.setFrameAutosaveName(frameAutosaveName)
             if let oldObs = consoleCloseObserver {
                 NotificationCenter.default.removeObserver(oldObs)
                 consoleCloseObserver = nil
