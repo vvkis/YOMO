@@ -176,23 +176,23 @@ struct SettingsDetailView: View {
     private var popoverUpdateSubtitle: String {
         switch updateStore.state {
         case .idle:
-            return "原地升级，保留全部配置"
+            return "点击检查新版本"
         case .checking:
-            return "正在连接 GitHub Releases…"
+            return "正在检查更新…"
         case .upToDate:
             return "已是最新版本"
         case .available(let release):
             return "发现新版本 \(release.displayVersion)"
         case .downloading(_, let progress, _, _):
-            return "正在下载更新 \(Int(round(progress * 100)))%"
+            return "下载中 \(Int(round(progress * 100)))%"
         case .verifying:
-            return "正在校验安装包完整性…"
+            return "准备安装中…"
         case .readyToInstall(let release, _, _, _):
-            return "\(release.displayVersion) 已就绪，前往升级"
+            return "\(release.displayVersion) 已就绪"
         case .installing:
-            return "正在替换并重启…"
-        case .failed(let msg):
-            return msg
+            return "正在升级重启…"
+        case .failed:
+            return "检查失败，请重试"
         }
     }
 }

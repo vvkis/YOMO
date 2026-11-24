@@ -487,10 +487,10 @@ public final class AppUpdateStore: ObservableObject {
             throw NSError(domain: "YOMOUpdate", code: -1, userInfo: [NSLocalizedDescriptionKey: "网络响应异常，请稍后重试"])
         }
         if http.statusCode == 404 {
-            throw NSError(domain: "YOMOUpdate", code: 404, userInfo: [NSLocalizedDescriptionKey: "GitHub 仓库暂未发布公开 Release 版本"])
+            return nil
         }
         guard (200...299).contains(http.statusCode) else {
-            throw NSError(domain: "YOMOUpdate", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "检查更新失败（HTTP \(http.statusCode)）"])
+            throw NSError(domain: "YOMOUpdate", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "检查更新失败，请稍后重试"])
         }
 
         // Resolve tag from JSON payload first, falling back to redirected `/releases/tag/<tag>` URL

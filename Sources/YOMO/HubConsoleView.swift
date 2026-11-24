@@ -533,7 +533,7 @@ private struct AppUpdateCard: View {
 
                     VStack(alignment: .leading, spacing: 2.5) {
                         HStack(spacing: 7) {
-                            Text("YOMO \(store.displayCurrentVersion)（Build \(store.currentBuild)）")
+                            Text("YOMO \(store.displayCurrentVersion)")
                                 .font(.system(size: 13.5, weight: .medium))
                                 .foregroundStyle(.primary)
                                 .monospacedDigit()
@@ -571,7 +571,7 @@ private struct AppUpdateCard: View {
                             .progressViewStyle(.linear)
                             .tint(ConsoleTheme.accent)
                         HStack {
-                            Text("正在从 GitHub Releases 下载安装包…")
+                            Text("正在下载更新…")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -589,18 +589,9 @@ private struct AppUpdateCard: View {
                 if let release = store.state.availableRelease, !release.notes.isEmpty {
                     ConsoleRowDivider()
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("\(release.title) 更新说明")
-                                .font(.system(size: 11.5, weight: .semibold))
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            if release.assetSizeBytes > 0 {
-                                Text("\(release.assetName) · \(AppUpdateStore.formatByteSize(release.assetSizeBytes))")
-                                    .font(.system(size: 10.5))
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
-                        }
+                        Text("\(release.displayVersion) 更新内容")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(.primary)
                         ScrollView(.vertical, showsIndicators: true) {
                             Text(release.notes)
                                 .font(.system(size: 11.5))
@@ -617,8 +608,8 @@ private struct AppUpdateCard: View {
                 ConsoleRowDivider()
 
                 ConsoleRow(
-                    title: "启动时自动检查更新",
-                    subtitle: "每 24 小时静默查询一次 GitHub Releases，无后台定时轮询；原地覆盖升级，完整继承全部偏好配置、剪贴板历史、菜单栏位置与开机自启设置"
+                    title: "自动检查更新",
+                    subtitle: "有新版本时自动提示，升级后保留原有设置"
                 ) {
                     ConsoleSwitch(isOn: $store.autoCheckEnabled)
                 }
@@ -664,13 +655,13 @@ private struct AppUpdateCard: View {
         case .downloading(_, let p, _, _):
             return ("下载中 \(Int(round(p * 100)))%", .blue)
         case .verifying:
-            return ("正在校验", .blue)
-        case .readyToInstall(let r, _, _, let verified):
-            return (verified ? "\(r.displayVersion) · SHA-256 已校验" : "\(r.displayVersion) · 已就绪", ConsoleTheme.accent)
+            return ("准备中", .blue)
+        case .readyToInstall(let r, _, _, _):
+            return ("\(r.displayVersion) 已就绪", ConsoleTheme.accent)
         case .installing:
-            return ("正在重启升级", ConsoleTheme.accent)
+            return ("正在升级", ConsoleTheme.accent)
         case .failed:
-            return ("检查异常", .orange)
+            return ("检查失败", .orange)
         default:
             return nil
         }
@@ -680,26 +671,29 @@ private struct AppUpdateCard: View {
         switch store.state {
         case .idle:
             if let last = store.lastCheckedText {
-                return "更新源：GitHub (\(AppUpdateStore.githubRepo)) · 上次检查 \(last)"
+                return "上次检查：\(last)"
             }
-            return "更新源：GitHub (\(AppUpdateStore.githubRepo)) · 点击右侧检查新版本"
+            return "点击右侧检查是否有新版本"
         case .checking:
-            return "正在连接 GitHub Releases 查询最新版本…"
+            return "正在检查更新…"
         case .upToDate:
             if let last = store.lastCheckedText {
-                return "当前已是最新版本（检查时间 \(last)）"
+                return "当前已是最新版本（\(last)）"
             }
             return "当前已是最新版本"
         case .available(let r):
-            return "检测到新版本 \(r.displayVersion)（\(AppUpdateStore.formatByteSize(r.assetSizeBytes))），支持原地无缝覆盖并继承所有配置"
+            let size = AppUpdateStore.formatByteSize(r.assetSizeBytes)
+            return size.isEmpty
+                ? "发现新版本 \(r.displayVersion)"
+                : "发现新版本 \(r.displayVersion)（\(size)）"
         case .downloading(let r, _, _, _):
-            return "正在下载 \(r.displayVersion) 安装包，下载完成后自动校验 SHA-256 并解压就绪"
-        case .verifying(let r):
-            return "正在校验 \(r.displayVersion) 安装包 SHA-256 指纹与应用包完整性…"
+            return "正在下载 \(r.displayVersion)…"
+        case .verifying:
+            return "正在验证并准备安装…"
         case .readyToInstall(let r, _, _, _):
-            return "\(r.displayVersion) 已准备完毕；点击「立即升级并重启」将原地替换当前应用并保留全部设置"
+            return "\(r.displayVersion) 已就绪，点击即可重启升级"
         case .installing(let r):
-            return "正在平滑退出并替换为 \(r.displayVersion)，稍后自动重新打开…"
+            return "正在升级至 \(r.displayVersion)，即将自动重启…"
         case .failed(let msg):
             return msg
         }
@@ -715,22 +709,19 @@ private struct AppUpdateCard: View {
             ConsoleActionButton("检查中…", disabled: true) {}
 
         case .available:
-            ConsoleActionButton("发布页") {
-                store.openReleasesPage()
-            }
             ConsoleActionButton("下载更新", variant: .prominent) {
                 store.downloadAvailableUpdate()
             }
 
         case .downloading:
-            ConsoleActionButton("取消下载") {
+            ConsoleActionButton("取消") {
                 store.cancelDownload()
             }
 
         case .verifying:
             ProgressView()
                 .controlSize(.small)
-            ConsoleActionButton("校验中…", disabled: true) {}
+            ConsoleActionButton("准备中…", disabled: true) {}
 
         case .readyToInstall:
             ConsoleActionButton("立即升级并重启", variant: .prominent) {
@@ -740,12 +731,9 @@ private struct AppUpdateCard: View {
         case .installing:
             ProgressView()
                 .controlSize(.small)
-            ConsoleActionButton("正在升级…", disabled: true) {}
+            ConsoleActionButton("升级中…", disabled: true) {}
 
         case .idle, .upToDate, .failed:
-            ConsoleActionButton("发布页") {
-                store.openReleasesPage()
-            }
             ConsoleActionButton("检查更新", variant: .prominent) {
                 store.checkForUpdates(userInitiated: true)
             }
