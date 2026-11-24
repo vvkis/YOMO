@@ -332,6 +332,13 @@ public final class ClipboardStore: ObservableObject {
     private var ocrToastClearWorkItem: DispatchWorkItem?
     private var copyFeedbackClearWorkItem: DispatchWorkItem?
     private var copyToastHUD: ClipboardCopyToastHUD?
+    private var imagePreviewPanel: ClipboardImagePreviewPanel?
+    private var spaceKeyMonitor: Any?
+    private var previewResignObserver: NSObjectProtocol?
+    private var previewSessionCount: Int = 0
+    private var hoveredEntry: ClipboardEntry?
+    private var isSpacePreviewHeld: Bool = false
+    private var previewLoadGeneration: UInt64 = 0
     private var captureGeneration: UInt64 = 0
     private var lazyImagePasteboardProvider: LazyImagePasteboardProvider?
     private let ioQueue = DispatchQueue(label: "com.yomo.clipboard.io", qos: .utility)
@@ -374,6 +381,12 @@ public final class ClipboardStore: ObservableObject {
     deinit {
         timer?.invalidate()
         hotKeyManager?.unregister()
+        if let monitor = spaceKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        if let obs = previewResignObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
         let nc = NSWorkspace.shared.notificationCenter
         for obs in workspaceObservers {
             nc.removeObserver(obs)
@@ -403,11 +416,179 @@ public final class ClipboardStore: ObservableObject {
             checkPasteboardNow()
             publishToUI()
         } else {
+            hideImagePreview()
             ocrToastClearWorkItem?.cancel()
             ocrScanningEntryID = nil
             activeOCRResult = nil
             ocrToastMessage = nil
         }
+    }
+
+    // MARK: - Hold Spacebar Image Quick Preview (Zero Idle Cost)
+
+    public func beginSpacePreviewSession() {
+        previewSessionCount += 1
+        guard previewSessionCount == 1 else { return }
+
+        if spaceKeyMonitor == nil {
+            spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
+                guard let self else { return event }
+                return self.handleLocalPreviewKeyEvent(event)
+            }
+        }
+        if previewResignObserver == nil {
+            previewResignObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didResignActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.hideImagePreview()
+                }
+            }
+        }
+    }
+
+    public func endSpacePreviewSession() {
+        previewSessionCount = max(0, previewSessionCount - 1)
+        guard previewSessionCount == 0 else { return }
+        hoveredEntry = nil
+        hideImagePreview()
+        if let monitor = spaceKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            spaceKeyMonitor = nil
+        }
+        if let obs = previewResignObserver {
+            NotificationCenter.default.removeObserver(obs)
+            previewResignObserver = nil
+        }
+    }
+
+    public func setHoveredEntry(_ entry: ClipboardEntry) {
+        hoveredEntry = entry
+        if isSpacePreviewHeld {
+            if entry.kind == .image {
+                showImagePreview(for: entry)
+            } else {
+                hideImagePreview(keepSpaceHeldState: true)
+            }
+        }
+    }
+
+    public func clearHoveredEntry(_ id: UUID) {
+        if hoveredEntry?.id == id {
+            hoveredEntry = nil
+            if isSpacePreviewHeld {
+                hideImagePreview(keepSpaceHeldState: true)
+            }
+        }
+    }
+
+    private func handleLocalPreviewKeyEvent(_ event: NSEvent) -> NSEvent? {
+        // Never intercept Spacebar while the user is typing inside the search TextField
+        if NSApp.keyWindow?.firstResponder is NSTextView {
+            return event
+        }
+
+        if event.keyCode == UInt16(kVK_Escape), isSpacePreviewHeld {
+            hideImagePreview()
+            return nil
+        }
+
+        guard event.keyCode == UInt16(kVK_Space) else {
+            return event
+        }
+
+        switch event.type {
+        case .keyDown:
+            let hasModifiers = !event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+            guard !hasModifiers, let hovered = hoveredEntry, hovered.kind == .image else {
+                return event
+            }
+            if !event.isARepeat && !isSpacePreviewHeld {
+                isSpacePreviewHeld = true
+                showImagePreview(for: hovered)
+            }
+            return nil
+
+        case .keyUp:
+            if isSpacePreviewHeld {
+                hideImagePreview()
+                return nil
+            }
+            return event
+
+        default:
+            return event
+        }
+    }
+
+    private func showImagePreview(for entry: ClipboardEntry) {
+        guard entry.kind == .image, let fileName = entry.imageFileName else { return }
+        previewLoadGeneration &+= 1
+        let gen = previewLoadGeneration
+        let fileURL = imagesDirURL.appendingPathComponent(fileName)
+        let anchorWindowFrame = NSApp.keyWindow?.frame
+        let mouseLoc = NSEvent.mouseLocation
+        let targetScreen = NSScreen.screens.first(where: { $0.frame.contains(mouseLoc) })
+            ?? NSApp.keyWindow?.screen
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        let scale = targetScreen?.backingScaleFactor ?? 2.0
+        let visibleFrame = targetScreen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+        let maxDisplayW = min(760.0, visibleFrame.width * 0.56)
+        let maxDisplayH = min(660.0, visibleFrame.height * 0.72)
+        let maxPixel = Int(ceil(max(maxDisplayW, maxDisplayH) * scale))
+
+        let caption: String = {
+            var parts: [String] = []
+            if let w = entry.imageWidth, let h = entry.imageHeight, w > 0, h > 0 {
+                parts.append("\(w) × \(h)")
+            }
+            if let app = entry.sourceAppName, !app.isEmpty {
+                parts.append(app)
+            }
+            parts.append("松开空格关闭")
+            return parts.joined(separator: " · ")
+        }()
+
+        ioQueue.async { [weak self] in
+            guard let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil) else { return }
+            let opts: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+                kCGImageSourceShouldCacheImmediately: true
+            ]
+            guard let cgImg = CGImageSourceCreateThumbnailAtIndex(source, 0, opts as CFDictionary) else { return }
+            let previewImg = NSImage(
+                cgImage: cgImg,
+                size: NSSize(width: CGFloat(cgImg.width) / scale, height: CGFloat(cgImg.height) / scale)
+            )
+            let logicalSize = previewImg.size
+
+            Task { @MainActor [weak self] in
+                guard let self, self.isSpacePreviewHeld, self.previewLoadGeneration == gen else { return }
+                if self.imagePreviewPanel == nil {
+                    self.imagePreviewPanel = ClipboardImagePreviewPanel()
+                }
+                self.imagePreviewPanel?.show(
+                    image: previewImg,
+                    logicalSize: logicalSize,
+                    caption: caption,
+                    anchorWindowFrame: anchorWindowFrame,
+                    visibleFrame: visibleFrame
+                )
+            }
+        }
+    }
+
+    private func hideImagePreview(keepSpaceHeldState: Bool = false) {
+        if !keepSpaceHeldState {
+            isSpacePreviewHeld = false
+        }
+        previewLoadGeneration &+= 1
+        imagePreviewPanel?.hideSmoothly()
     }
 
     public func openStorageFolder() {
@@ -1357,6 +1538,173 @@ private final class LazyImagePasteboardProvider: NSObject, NSPasteboardItemDataP
         guard type == .tiff else { return }
         if let img = NSImage(data: pngData), let tiff = img.tiffRepresentation {
             item.setData(tiff, forType: .tiff)
+        }
+    }
+}
+
+/// Non-activating, click-through floating Retina image preview panel triggered while holding Spacebar
+/// over an image entry in Clipboard History. Releases the full-res NSImage immediately when hidden.
+@MainActor
+private final class ClipboardImagePreviewPanel: NSPanel {
+    private final class Model: ObservableObject {
+        @Published var image: NSImage? = nil
+        @Published var caption: String = ""
+    }
+
+    private let model = Model()
+    private var animationGeneration: UInt64 = 0
+    private let footerHeight: CGFloat = 34
+    private let contentPadding: CGFloat = 10
+
+    init() {
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 320),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+
+        isFloatingPanel = true
+        level = .statusBar
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        hidesOnDeactivate = false
+        ignoresMouseEvents = true
+
+        let host = NSHostingView(rootView: PreviewContentView(model: model, padding: contentPadding, footerHeight: footerHeight))
+        host.autoresizingMask = [.width, .height]
+        self.contentView = host
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    func show(
+        image: NSImage,
+        logicalSize: NSSize,
+        caption: String,
+        anchorWindowFrame: NSRect?,
+        visibleFrame: NSRect
+    ) {
+        animationGeneration &+= 1
+        model.image = image
+        model.caption = caption
+
+        let maxW = min(760.0, visibleFrame.width * 0.56)
+        let maxH = min(660.0, visibleFrame.height * 0.72)
+        let imgW = max(1.0, logicalSize.width)
+        let imgH = max(1.0, logicalSize.height)
+
+        let fitScale = min(1.0, min((maxW - contentPadding * 2) / imgW, (maxH - contentPadding * 2 - footerHeight) / imgH))
+        let drawW = max(220.0, round(imgW * fitScale))
+        let drawH = max(140.0, round(imgH * fitScale))
+        let panelW = min(maxW, drawW + contentPadding * 2)
+        let panelH = min(maxH, drawH + contentPadding * 2 + footerHeight)
+
+        // Position neatly beside the clipboard popover/window so it never blocks the hover list
+        let gap: CGFloat = 14
+        let originX: CGFloat
+        let originY: CGFloat
+
+        if let anchor = anchorWindowFrame {
+            if anchor.minX - gap - panelW >= visibleFrame.minX + 12 {
+                originX = round(anchor.minX - gap - panelW)
+            } else if anchor.maxX + gap + panelW <= visibleFrame.maxX - 12 {
+                originX = round(anchor.maxX + gap)
+            } else {
+                originX = round(visibleFrame.midX - panelW / 2.0)
+            }
+            let idealY = anchor.maxY - panelH - 12
+            originY = round(min(visibleFrame.maxY - panelH - 12, max(visibleFrame.minY + 16, idealY)))
+        } else {
+            originX = round(visibleFrame.midX - panelW / 2.0)
+            originY = round(visibleFrame.midY - panelH / 2.0)
+        }
+
+        let targetFrame = NSRect(x: originX, y: originY, width: panelW, height: panelH)
+        let wasVisible = isVisible
+        setFrame(targetFrame, display: true)
+        contentView?.frame = NSRect(origin: .zero, size: targetFrame.size)
+
+        if !wasVisible {
+            alphaValue = 0
+            orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.12
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                animator().alphaValue = 1.0
+            }
+        } else {
+            alphaValue = 1.0
+            orderFrontRegardless()
+        }
+    }
+
+    func hideSmoothly() {
+        animationGeneration &+= 1
+        let gen = animationGeneration
+        guard isVisible else {
+            model.image = nil
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.10
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            animator().alphaValue = 0.0
+        }, completionHandler: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.animationGeneration == gen else { return }
+                self.orderOut(nil)
+                self.alphaValue = 1.0
+                self.model.image = nil
+            }
+        })
+    }
+
+    private struct PreviewContentView: View {
+        @ObservedObject var model: Model
+        let padding: CGFloat
+        let footerHeight: CGFloat
+
+        var body: some View {
+            VStack(spacing: 0) {
+                ZStack {
+                    if let img = model.image {
+                        Image(nsImage: img)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.top, padding)
+                .padding(.horizontal, padding)
+
+                HStack(spacing: 6) {
+                    Image(systemName: "eye.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.72))
+                    Text(model.caption)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.86))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
+                .frame(height: footerHeight)
+                .padding(.horizontal, 12)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(nsColor: NSColor(white: 0.10, alpha: 0.94)))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.9)
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
     }
 }

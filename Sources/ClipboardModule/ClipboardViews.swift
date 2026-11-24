@@ -141,6 +141,13 @@ public struct ClipboardPopoverView: View {
                                         },
                                         onDelete: {
                                             store.deleteEntry(item)
+                                        },
+                                        onHoverChanged: { isHovering in
+                                            if isHovering {
+                                                store.setHoveredEntry(item)
+                                            } else {
+                                                store.clearHoveredEntry(item.id)
+                                            }
                                         }
                                     )
                                 }
@@ -204,7 +211,7 @@ public struct ClipboardPopoverView: View {
 
             // 5. Footer
             HStack {
-                Text("点击即复制 · 共 \(store.totalCount) 条 · ⇧⌘V")
+                Text("按住空格预览图 · 共 \(store.totalCount) 条 · ⇧⌘V")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -223,8 +230,10 @@ public struct ClipboardPopoverView: View {
         .padding(14)
         .onAppear {
             store.setUIActive(true)
+            store.beginSpacePreviewSession()
         }
         .onDisappear {
+            store.endSpacePreviewSession()
             store.dismissOCRResult()
         }
     }
@@ -241,6 +250,7 @@ private struct ClipboardEntryRow: View {
     let onOCR: (() -> Void)?
     let onTogglePin: () -> Void
     let onDelete: () -> Void
+    let onHoverChanged: (Bool) -> Void
 
     @StateObject private var hover = HoverTracker()
 
@@ -305,7 +315,7 @@ private struct ClipboardEntryRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("点击即可复制到剪贴板")
+            .help(entry.kind == .image ? "点击即复制 · 悬停按住空格可预览大图" : "点击即可复制到剪贴板")
 
             // Quick Copy feedback / OCR (for images) / Pin & Delete actions
             HStack(spacing: 4) {
@@ -411,7 +421,10 @@ private struct ClipboardEntryRow: View {
                     lineWidth: 0.8
                 )
         )
-        .onHover { hover.isHovering = $0 }
+        .onHover { isHovering in
+            hover.isHovering = isHovering
+            onHoverChanged(isHovering)
+        }
     }
 }
 
@@ -864,6 +877,13 @@ public struct ClipboardConsoleView: View {
                                 },
                                 onDelete: {
                                     store.deleteEntry(item)
+                                },
+                                onHoverChanged: { isHovering in
+                                    if isHovering {
+                                        store.setHoveredEntry(item)
+                                    } else {
+                                        store.clearHoveredEntry(item.id)
+                                    }
                                 }
                             )
                         }
@@ -874,8 +894,10 @@ public struct ClipboardConsoleView: View {
         }
         .onAppear {
             store.setUIActive(true)
+            store.beginSpacePreviewSession()
         }
         .onDisappear {
+            store.endSpacePreviewSession()
             store.dismissOCRResult()
         }
     }
