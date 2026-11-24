@@ -52,6 +52,7 @@ public struct ClipboardPopoverView: View {
                 ClipboardOCRResultPanel(
                     result: ocrResult,
                     thumbnail: store.entry(for: ocrResult.entryID).flatMap { store.thumbnail(for: $0) },
+                    sourceIcon: store.entry(for: ocrResult.entryID).flatMap { store.sourceIcon(for: $0) },
                     mergeLines: $store.ocrMergeLines,
                     toastMessage: store.ocrToastMessage,
                     onCopyText: { text in
@@ -296,8 +297,17 @@ private struct ClipboardEntryRow: View {
                                     .foregroundStyle(.orange)
                             }
                             if let app = entry.sourceAppName, !app.isEmpty {
-                                Text(app)
-                                    .lineLimit(1)
+                                HStack(spacing: 3) {
+                                    if thumbnail != nil, let sourceIcon {
+                                        Image(nsImage: sourceIcon)
+                                            .resizable()
+                                            .interpolation(.high)
+                                            .frame(width: 12, height: 12)
+                                            .clipShape(RoundedRectangle(cornerRadius: 2.5, style: .continuous))
+                                    }
+                                    Text(app)
+                                        .lineLimit(1)
+                                }
                                 Text("·")
                             }
                             Text(relativeTime)
@@ -431,6 +441,7 @@ private struct ClipboardEntryRow: View {
 private struct ClipboardOCRResultPanel: View {
     let result: ClipboardOCRResult
     let thumbnail: NSImage?
+    let sourceIcon: NSImage?
     @Binding var mergeLines: Bool
     let toastMessage: String?
     let onCopyText: (String) -> Void
@@ -465,6 +476,14 @@ private struct ClipboardOCRResultPanel: View {
                         .aspectRatio(contentMode: .fill)
                         .frame(width: 28, height: 20)
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                }
+
+                if let sourceIcon {
+                    Image(nsImage: sourceIcon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 14, height: 14)
+                        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
                 }
 
                 Text(result.sourceLabel)
@@ -841,6 +860,7 @@ public struct ClipboardConsoleView: View {
                         ClipboardOCRResultPanel(
                             result: ocrResult,
                             thumbnail: store.entry(for: ocrResult.entryID).flatMap { store.thumbnail(for: $0) },
+                            sourceIcon: store.entry(for: ocrResult.entryID).flatMap { store.sourceIcon(for: $0) },
                             mergeLines: $store.ocrMergeLines,
                             toastMessage: store.ocrToastMessage,
                             onCopyText: { text in

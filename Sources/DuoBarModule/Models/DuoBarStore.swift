@@ -104,6 +104,11 @@ public final class DuoBarStore: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     public var onStatusBarNeedsRedraw: (() -> Void)?
+    public var onStatusItemPositionRequested: (() -> Void)?
+
+    public func reapplyStatusItemPosition() {
+        onStatusItemPositionRequested?()
+    }
 
     private var isUIActive: Bool {
         isPopoverOpen || isConsoleOpen

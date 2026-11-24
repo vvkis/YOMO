@@ -554,6 +554,7 @@ public final class ClipboardStore: ObservableObject {
             quickPreviewPanel?.showText(
                 displayText,
                 caption: caption,
+                sourceIcon: sourceIcon(for: entry),
                 anchorWindowFrame: anchorWindowFrame,
                 visibleFrame: visibleFrame
             )
@@ -564,6 +565,7 @@ public final class ClipboardStore: ObservableObject {
             let maxDisplayW = min(760.0, visibleFrame.width * 0.56)
             let maxDisplayH = min(660.0, visibleFrame.height * 0.72)
             let maxPixel = Int(ceil(max(maxDisplayW, maxDisplayH) * scale))
+            let icon = sourceIcon(for: entry)
 
             var parts: [String] = []
             if let w = entry.imageWidth, let h = entry.imageHeight, w > 0, h > 0 {
@@ -599,6 +601,7 @@ public final class ClipboardStore: ObservableObject {
                         previewImg,
                         logicalSize: logicalSize,
                         caption: caption,
+                        sourceIcon: icon,
                         anchorWindowFrame: anchorWindowFrame,
                         visibleFrame: visibleFrame
                     )
@@ -1019,13 +1022,17 @@ public final class ClipboardStore: ObservableObject {
         if missingAppIconBundleIDs.contains(bundleID) {
             return nil
         }
-        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-            missingAppIconBundleIDs.insert(bundleID)
-            return nil
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            let icon = NSWorkspace.shared.icon(forFile: appURL.path)
+            appIconCache.setObject(icon, forKey: key)
+            return icon
         }
-        let icon = NSWorkspace.shared.icon(forFile: appURL.path)
-        appIconCache.setObject(icon, forKey: key)
-        return icon
+        if let runningIcon = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.icon {
+            appIconCache.setObject(runningIcon, forKey: key)
+            return runningIcon
+        }
+        missingAppIconBundleIDs.insert(bundleID)
+        return nil
     }
 
     public func relativeTimeText(for date: Date) -> String {
@@ -1574,6 +1581,7 @@ private final class ClipboardQuickPreviewPanel: NSPanel {
         @Published var image: NSImage? = nil
         @Published var text: String? = nil
         @Published var caption: String = ""
+        @Published var sourceIcon: NSImage? = nil
     }
 
     private let model = Model()
@@ -1610,6 +1618,7 @@ private final class ClipboardQuickPreviewPanel: NSPanel {
         _ image: NSImage,
         logicalSize: NSSize,
         caption: String,
+        sourceIcon: NSImage?,
         anchorWindowFrame: NSRect?,
         visibleFrame: NSRect
     ) {
@@ -1617,6 +1626,7 @@ private final class ClipboardQuickPreviewPanel: NSPanel {
         model.text = nil
         model.image = image
         model.caption = caption
+        model.sourceIcon = sourceIcon
 
         let maxW = min(760.0, visibleFrame.width * 0.56)
         let maxH = min(660.0, visibleFrame.height * 0.72)
@@ -1635,6 +1645,7 @@ private final class ClipboardQuickPreviewPanel: NSPanel {
     func showText(
         _ text: String,
         caption: String,
+        sourceIcon: NSImage?,
         anchorWindowFrame: NSRect?,
         visibleFrame: NSRect
     ) {
@@ -1642,6 +1653,7 @@ private final class ClipboardQuickPreviewPanel: NSPanel {
         model.image = nil
         model.text = text
         model.caption = caption
+        model.sourceIcon = sourceIcon
 
         let maxW = min(540.0, visibleFrame.width * 0.44)
         let maxH = min(560.0, visibleFrame.height * 0.68)
@@ -1715,6 +1727,7 @@ private final class ClipboardQuickPreviewPanel: NSPanel {
         guard isVisible else {
             model.image = nil
             model.text = nil
+            model.sourceIcon = nil
             return
         }
         NSAnimationContext.runAnimationGroup({ ctx in
@@ -1728,6 +1741,7 @@ private final class ClipboardQuickPreviewPanel: NSPanel {
                 self.alphaValue = 1.0
                 self.model.image = nil
                 self.model.text = nil
+                self.model.sourceIcon = nil
             }
         })
     }
@@ -1768,9 +1782,17 @@ private final class ClipboardQuickPreviewPanel: NSPanel {
                 }
 
                 HStack(spacing: 6) {
-                    Image(systemName: model.image != nil ? "photo" : "doc.text")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.72))
+                    if let sourceIcon = model.sourceIcon {
+                        Image(nsImage: sourceIcon)
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: 15, height: 15)
+                            .clipShape(RoundedRectangle(cornerRadius: 3.5, style: .continuous))
+                    } else {
+                        Image(systemName: model.image != nil ? "photo" : "doc.text")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.72))
+                    }
                     Text(model.caption)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.86))
