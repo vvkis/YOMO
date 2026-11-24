@@ -180,11 +180,14 @@ public struct StartupItemInfo: Identifiable, Hashable, Sendable {
     public let scope: StartupItemScope
     public let sourcePath: String
     public let executablePath: String?
+    public let appBundlePath: String?
     public let runAtLoad: Bool
     public let keepAlive: Bool
-    public let isDisabledInPlist: Bool
+    public let isEnabled: Bool
+    public let isStoredInDisabledVault: Bool
     public let isRunning: Bool
     public let isOrphanedBinary: Bool
+    public let canToggleDirectly: Bool
     public let canMoveToTrash: Bool
 
     public var displaySourcePath: String {
@@ -397,9 +400,11 @@ public final class SpaceCleanerStore: ObservableObject {
     @Published public private(set) var isScanningStartupItems: Bool = false
     @Published public private(set) var hasScannedStartupItems: Bool = false
     @Published public var startupStatusMessage: String? = nil
+    @Published public private(set) var togglingStartupItemID: String? = nil
 
     private var scanGeneration: UInt64 = 0
     private let workQueue = DispatchQueue(label: "com.yomo.spacecleaner.worker", qos: .userInitiated)
+    private let startupIconCache = NSCache<NSString, NSImage>()
 
     public init() {}
 
@@ -618,12 +623,27 @@ public final class SpaceCleanerStore: ObservableObject {
         }
     }
 
+    public var enabledStartupCount: Int {
+        startupItems.filter(\.isEnabled).count
+    }
+
     public var runningStartupCount: Int {
         startupItems.filter(\.isRunning).count
     }
 
     public var orphanedStartupCount: Int {
         startupItems.filter(\.isOrphanedBinary).count
+    }
+
+    public func appIcon(for item: StartupItemInfo) -> NSImage? {
+        guard let appPath = item.appBundlePath, !appPath.isEmpty else { return nil }
+        let key = appPath as NSString
+        if let cached = startupIconCache.object(forKey: key) {
+            return cached
+        }
+        let icon = NSWorkspace.shared.icon(forFile: appPath)
+        startupIconCache.setObject(icon, forKey: key)
+        return icon
     }
 
     public func refreshStartupItems() {
@@ -642,19 +662,44 @@ public final class SpaceCleanerStore: ObservableObject {
         }
     }
 
-    /// Safely moves a user-owned ~/Library/LaunchAgents/*.plist to macOS Trash (reversible via Put Back).
+    /// Directly toggles a user-level LaunchAgent (~/Library/LaunchAgents) ON or OFF without root privileges.
+    /// Uses a reversible disabled vault + explicit launchctl enable/disable & bootstrap/bootout so changes take effect immediately and survive reboot.
+    public func setUserStartupItemEnabled(_ item: StartupItemInfo, enabled: Bool) {
+        guard item.canToggleDirectly, item.scope == .userLaunchAgent, togglingStartupItemID == nil else {
+            return
+        }
+        togglingStartupItemID = item.id
+        let itemCopy = item
+        let runningSnap = Self.snapshotRunningProcesses()
+
+        workQueue.async { [weak self] in
+            let outcome = SpaceCleanerEngine.toggleUserLaunchAgent(itemCopy, enabled: enabled)
+            let updatedItems = SpaceCleanerEngine.scanStartupItems(runningSnap: runningSnap)
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.togglingStartupItemID = nil
+                self.startupItems = updatedItems
+                self.startupStatusMessage = outcome.message
+            }
+        }
+    }
+
+    /// Safely moves a user-owned LaunchAgent plist (active or disabled vault) to macOS Trash (reversible via Put Back).
     public func trashUserStartupItem(_ item: StartupItemInfo) {
         guard item.canMoveToTrash, item.scope == .userLaunchAgent else { return }
         let home = NSHomeDirectory()
-        let allowedDir = URL(fileURLWithPath: home).appendingPathComponent("Library/LaunchAgents").standardizedFileURL.path
+        let activeDir = URL(fileURLWithPath: home).appendingPathComponent("Library/LaunchAgents").standardizedFileURL.path
+        let vaultDir = SpaceCleanerEngine.disabledVaultURL(home: home).standardizedFileURL.path
         let targetURL = URL(fileURLWithPath: item.sourcePath).standardizedFileURL
-        guard targetURL.path.hasPrefix(allowedDir + "/"), targetURL.pathExtension.lowercased() == "plist" else {
+        let inAllowedDir = targetURL.path.hasPrefix(activeDir + "/") || targetURL.path.hasPrefix(vaultDir + "/")
+        guard inAllowedDir, targetURL.pathExtension.lowercased() == "plist" else {
             return
         }
         do {
             try FileManager.default.trashItem(at: targetURL, resultingItemURL: nil)
             startupItems.removeAll { $0.id == item.id }
-            startupStatusMessage = "已将「\(item.displayName)」的启动配置移至废纸篓，下次登录生效（可在废纸篓中还原）"
+            startupStatusMessage = "已将「\(item.displayName)」的启动配置移至废纸篓（可在废纸篓中放回原处）"
         } catch {
             startupStatusMessage = "移除「\(item.displayName)」失败：\(error.localizedDescription)"
         }
@@ -1999,20 +2044,37 @@ private enum SpaceCleanerEngine {
         return false
     }
 
-    // MARK: - Native Zero-Subprocess Startup / Login Items Scanner
+    // MARK: - Native Zero-Subprocess Startup / Login Items Scanner & User Toggle
+
+    static func disabledVaultURL(home: String) -> URL {
+        URL(fileURLWithPath: home)
+            .appendingPathComponent("Library/Application Support/YOMO/DisabledLaunchAgents", isDirectory: true)
+            .standardizedFileURL
+    }
 
     static func scanStartupItems(
         runningSnap: (bundleIDs: Set<String>, executablePaths: Set<String>, executableNames: Set<String>)
     ) -> [StartupItemInfo] {
         let fm = FileManager.default
         let home = NSHomeDirectory()
+        let uid = getuid()
         var results: [StartupItemInfo] = []
 
-        let plistDirs: [(path: String, scope: StartupItemScope, canTrash: Bool)] = [
-            (URL(fileURLWithPath: home).appendingPathComponent("Library/LaunchAgents").standardizedFileURL.path, .userLaunchAgent, true),
-            ("/Library/LaunchAgents", .globalLaunchAgent, false),
-            ("/Library/LaunchDaemons", .globalLaunchDaemon, false)
+        // Read macOS launchd's native disabled override plists (world-readable, zero subprocess)
+        let userDisabledOverrides = readLaunchdDisabledOverrides(at: "/var/db/com.apple.xpc.launchd/disabled.\(uid).plist")
+        let systemDisabledOverrides = readLaunchdDisabledOverrides(at: "/var/db/com.apple.xpc.launchd/disabled.plist")
+
+        let userAgentsDir = URL(fileURLWithPath: home).appendingPathComponent("Library/LaunchAgents").standardizedFileURL.path
+        let vaultDir = disabledVaultURL(home: home).path
+
+        let plistDirs: [(path: String, scope: StartupItemScope, canToggle: Bool, canTrash: Bool, isVault: Bool)] = [
+            (userAgentsDir, .userLaunchAgent, true, true, false),
+            (vaultDir, .userLaunchAgent, true, true, true),
+            ("/Library/LaunchAgents", .globalLaunchAgent, false, false, false),
+            ("/Library/LaunchDaemons", .globalLaunchDaemon, false, false, false)
         ]
+
+        var seenLabelsInUserScope = Set<String>()
 
         for dirSpec in plistDirs {
             let dirURL = URL(fileURLWithPath: dirSpec.path)
@@ -2029,6 +2091,12 @@ private enum SpaceCleanerEngine {
                 }
 
                 let label = (plist["Label"] as? String) ?? fileURL.deletingPathExtension().lastPathComponent
+                if dirSpec.scope == .userLaunchAgent {
+                    let key = label.lowercased()
+                    if seenLabelsInUserScope.contains(key) { continue }
+                    seenLabelsInUserScope.insert(key)
+                }
+
                 let progArgs = plist["ProgramArguments"] as? [String]
                 let rawProgram = (plist["Program"] as? String) ?? progArgs?.first
                 let expandedExec: String? = rawProgram.map { p in
@@ -2046,9 +2114,15 @@ private enum SpaceCleanerEngine {
                 }()
                 let disabledInPlist = (plist["Disabled"] as? Bool) ?? false
 
+                let overrides = (dirSpec.scope == .userLaunchAgent) ? userDisabledOverrides : systemDisabledOverrides
+                let isEnabled: Bool = {
+                    if dirSpec.isVault { return false }
+                    if let ov = overrides[label] { return !ov }
+                    return !disabledInPlist
+                }()
+
                 let isOrphaned: Bool = {
                     guard let exec = expandedExec, !exec.isEmpty else { return false }
-                    // Only flag absolute binary paths as orphaned if missing on disk
                     guard exec.hasPrefix("/") else { return false }
                     return !fm.fileExists(atPath: exec)
                 }()
@@ -2057,6 +2131,7 @@ private enum SpaceCleanerEngine {
                     ?? ((plist["AssociatedBundleIdentifiers"] as? String).map { [$0] } ?? [])
 
                 let isRunning: Bool = {
+                    if dirSpec.isVault { return false }
                     if runningSnap.bundleIDs.contains(label.lowercased()) { return true }
                     for b in assocBundles where runningSnap.bundleIDs.contains(b.lowercased()) {
                         return true
@@ -2070,21 +2145,28 @@ private enum SpaceCleanerEngine {
                     return false
                 }()
 
-                let displayName = friendlyStartupName(label: label, executablePath: expandedExec, associatedBundles: assocBundles)
+                let (displayName, appBundlePath) = resolveStartupIdentity(
+                    label: label,
+                    executablePath: expandedExec,
+                    associatedBundles: assocBundles
+                )
 
                 results.append(
                     StartupItemInfo(
-                        id: "\(dirSpec.scope.rawValue)::\(fileURL.path)",
+                        id: "\(dirSpec.scope.rawValue)::\(label)",
                         label: label,
                         displayName: displayName,
                         scope: dirSpec.scope,
                         sourcePath: fileURL.standardizedFileURL.path,
                         executablePath: expandedExec,
+                        appBundlePath: appBundlePath,
                         runAtLoad: runAtLoad,
                         keepAlive: keepAlive,
-                        isDisabledInPlist: disabledInPlist,
+                        isEnabled: isEnabled,
+                        isStoredInDisabledVault: dirSpec.isVault,
                         isRunning: isRunning,
                         isOrphanedBinary: isOrphaned,
+                        canToggleDirectly: dirSpec.canToggle && !isOrphaned,
                         canMoveToTrash: dirSpec.canTrash
                     )
                 )
@@ -2110,6 +2192,7 @@ private enum SpaceCleanerEngine {
                     let helperBundle = Bundle(url: helperURL)
                     let bid = helperBundle?.bundleIdentifier ?? helperURL.deletingPathExtension().lastPathComponent
                     let isRunning = runningSnap.bundleIDs.contains(bid.lowercased())
+                    let isEnabled = userDisabledOverrides[bid].map { !$0 } ?? isRunning
                     results.append(
                         StartupItemInfo(
                             id: "loginItem::\(helperURL.path)",
@@ -2118,11 +2201,14 @@ private enum SpaceCleanerEngine {
                             scope: .appLoginItem,
                             sourcePath: helperURL.standardizedFileURL.path,
                             executablePath: helperBundle?.executablePath,
+                            appBundlePath: appURL.standardizedFileURL.path,
                             runAtLoad: true,
                             keepAlive: false,
-                            isDisabledInPlist: false,
+                            isEnabled: isEnabled,
+                            isStoredInDisabledVault: false,
                             isRunning: isRunning,
                             isOrphanedBinary: false,
+                            canToggleDirectly: false,
                             canMoveToTrash: false
                         )
                     )
@@ -2130,33 +2216,114 @@ private enum SpaceCleanerEngine {
             }
         }
 
-        // Sort: orphaned zombies first (actionable!), then user agents, then running, then alphabetical
+        // Sort: user-toggleable first (or orphaned zombies), then enabled/running, then alphabetical
         return results.sorted { a, b in
             if a.isOrphanedBinary != b.isOrphanedBinary { return a.isOrphanedBinary }
-            if a.canMoveToTrash != b.canMoveToTrash { return a.canMoveToTrash }
+            if a.canToggleDirectly != b.canToggleDirectly { return a.canToggleDirectly }
+            if a.isEnabled != b.isEnabled { return a.isEnabled }
             if a.isRunning != b.isRunning { return a.isRunning }
             return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
         }
     }
 
-    private static func friendlyStartupName(label: String, executablePath: String?, associatedBundles: [String]) -> String {
+    /// Explicit user-triggered toggle for a user-owned LaunchAgent (never called in polling).
+    static func toggleUserLaunchAgent(_ item: StartupItemInfo, enabled: Bool) -> (ok: Bool, message: String) {
+        let fm = FileManager.default
+        let home = NSHomeDirectory()
+        let uid = getuid()
+        let domain = "gui/\(uid)"
+        let activeDir = URL(fileURLWithPath: home).appendingPathComponent("Library/LaunchAgents", isDirectory: true).standardizedFileURL
+        let vaultDir = disabledVaultURL(home: home)
+        let currentURL = URL(fileURLWithPath: item.sourcePath).standardizedFileURL
+        let fileName = currentURL.lastPathComponent
+
+        if enabled {
+            let destURL = activeDir.appendingPathComponent(fileName)
+            do {
+                try fm.createDirectory(at: activeDir, withIntermediateDirectories: true)
+                if currentURL.path != destURL.path, fm.fileExists(atPath: currentURL.path) {
+                    if fm.fileExists(atPath: destURL.path) {
+                        try fm.removeItem(at: destURL)
+                    }
+                    try fm.moveItem(at: currentURL, to: destURL)
+                }
+                _ = runLaunchctl(["enable", "\(domain)/\(item.label)"])
+                _ = runLaunchctl(["bootstrap", domain, destURL.path])
+                return (true, "已开启用户启动项「\(item.displayName)」，已恢复并立即生效")
+            } catch {
+                return (false, "开启「\(item.displayName)」失败：\(error.localizedDescription)")
+            }
+        } else {
+            let destURL = vaultDir.appendingPathComponent(fileName)
+            do {
+                try fm.createDirectory(at: vaultDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                _ = runLaunchctl(["disable", "\(domain)/\(item.label)"])
+                if currentURL.path.hasPrefix(activeDir.path + "/") {
+                    _ = runLaunchctl(["bootout", domain, currentURL.path])
+                    if fm.fileExists(atPath: destURL.path) {
+                        try fm.removeItem(at: destURL)
+                    }
+                    try fm.moveItem(at: currentURL, to: destURL)
+                }
+                return (true, "已关闭用户启动项「\(item.displayName)」，配置已无损暂存，随时可重新开启")
+            } catch {
+                return (false, "关闭「\(item.displayName)」失败：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    private static func runLaunchctl(_ args: [String]) -> Int32 {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        proc.arguments = args
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            return proc.terminationStatus
+        } catch {
+            return -1
+        }
+    }
+
+    private static func readLaunchdDisabledOverrides(at path: String) -> [String: Bool] {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let dict = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] else {
+            return [:]
+        }
+        var result: [String: Bool] = [:]
+        for (k, v) in dict {
+            if let b = v as? Bool {
+                result[k] = b
+            }
+        }
+        return result
+    }
+
+    private static func resolveStartupIdentity(
+        label: String,
+        executablePath: String?,
+        associatedBundles: [String]
+    ) -> (displayName: String, appBundlePath: String?) {
         for bid in associatedBundles {
             if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid) {
-                return appURL.deletingPathExtension().lastPathComponent
+                return (appURL.deletingPathExtension().lastPathComponent, appURL.standardizedFileURL.path)
             }
         }
         if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: label) {
-            return appURL.deletingPathExtension().lastPathComponent
+            return (appURL.deletingPathExtension().lastPathComponent, appURL.standardizedFileURL.path)
         }
         if let exec = executablePath {
-            // If executable lives inside Foo.app/Contents/..., extract "Foo"
             let comps = URL(fileURLWithPath: exec).pathComponents
-            if let appComp = comps.first(where: { $0.hasSuffix(".app") }) {
-                return String(appComp.dropLast(4))
+            if let idx = comps.firstIndex(where: { $0.hasSuffix(".app") }) {
+                let appPath = NSString.path(withComponents: Array(comps.prefix(idx + 1)))
+                let name = String(comps[idx].dropLast(4))
+                return (name, FileManager.default.fileExists(atPath: appPath) ? appPath : nil)
             }
             let base = URL(fileURLWithPath: exec).lastPathComponent
-            if !base.isEmpty { return base }
+            if !base.isEmpty { return (base, nil) }
         }
-        return resolveFriendlyAppName(forCacheFolder: label)
+        return (resolveFriendlyAppName(forCacheFolder: label), nil)
     }
 }

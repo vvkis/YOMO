@@ -889,7 +889,7 @@ public struct SpaceCleanerConsoleView: View {
                          : "共检测到 \(store.startupItems.count) 个开机启动与后台项")
                         .font(.system(size: 15.5, weight: .bold))
                         .monospacedDigit()
-                    Text("运行中 \(store.runningStartupCount) 项 · 已失效僵尸残留 \(store.orphanedStartupCount) 项 · 覆盖用户/系统 LaunchAgents、LaunchDaemons 与应用内嵌登录项")
+                    Text("已开启 \(store.enabledStartupCount) 项 · 运行中 \(store.runningStartupCount) 项 · 已失效残留 \(store.orphanedStartupCount) 项")
                         .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
@@ -917,7 +917,7 @@ public struct SpaceCleanerConsoleView: View {
                 icon: "checkmark.circle.fill",
                 tint: ConsoleTheme.accent,
                 title: msg,
-                subtitle: "可在访达废纸篓中右键「放回原处」随时恢复。"
+                subtitle: "用户代理支持随时切换开关；系统级与 BTM 项受 macOS 保护请在系统设置中调整。"
             )
         }
 
@@ -978,8 +978,14 @@ public struct SpaceCleanerConsoleView: View {
                         }
                         ConsoleStartupItemRow(
                             item: item,
+                            appIcon: store.appIcon(for: item),
+                            isToggling: store.togglingStartupItemID == item.id,
+                            onToggleEnabled: item.canToggleDirectly ? { newValue in
+                                store.setUserStartupItemEnabled(item, enabled: newValue)
+                            } : nil,
+                            onOpenSystemSettings: { store.openLoginItemsSettings() },
                             onReveal: { store.revealInFinder(item.sourcePath) },
-                            onTrash: item.canMoveToTrash ? { store.trashUserStartupItem(item) } : nil
+                            onTrash: (item.canMoveToTrash && item.isOrphanedBinary) ? { store.trashUserStartupItem(item) } : nil
                         )
                     }
                 }
@@ -987,17 +993,17 @@ public struct SpaceCleanerConsoleView: View {
         }
 
         // 4. Guidance Card
-        ConsoleCard("开机项管理说明") {
+        ConsoleCard("权限边界与层级说明") {
             ConsoleRow(
-                title: "用户级启动项（~/Library/LaunchAgents）可直接移至废纸篓",
-                subtitle: "特别是标红的「程序已卸载 · 僵尸残留」项，移至废纸篓后下次登录即彻底停止拉起；若需恢复只需在废纸篓放回原处"
+                title: "用户代理（~/Library/LaunchAgents）· 可直接开关",
+                subtitle: "仅对当前用户登录后生效，归个人账号所有。关闭后配置会无损暂存并立即停用，随时可重新开启，无需管理员权限"
             ) { EmptyView() }
 
             ConsoleRowDivider()
 
             ConsoleRow(
-                title: "系统级代理（/Library）与应用内嵌登录项（macOS BTM）",
-                subtitle: "受 macOS 权限保护不直接改写系统目录，点击「系统登录项设置…」可在官方「通用 → 登录项与扩展」中安全开关，或点击文件夹图标定位 .plist"
+                title: "系统代理 & 系统守护进程（/Library）· 建议前往系统设置修改",
+                subtitle: "对所有用户或开机 root 权限生效，受 macOS 权限保护。YOMO 不安装常驻 root 守护程序，点击右侧「系统设置」即可在官方「登录项与扩展」中安全开关"
             ) { EmptyView() }
         }
     }
@@ -1279,18 +1285,29 @@ private struct CleanerCheckGlyph: View {
 
 private struct ConsoleStartupItemRow: View {
     let item: StartupItemInfo
+    let appIcon: NSImage?
+    let isToggling: Bool
+    let onToggleEnabled: ((Bool) -> Void)?
+    let onOpenSystemSettings: () -> Void
     let onReveal: () -> Void
     let onTrash: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .center, spacing: 11) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill((item.isOrphanedBinary ? Color.red : item.scope.tintColor).opacity(0.14))
+            if let appIcon, !item.isOrphanedBinary {
+                Image(nsImage: appIcon)
+                    .resizable()
+                    .interpolation(.high)
                     .frame(width: 30, height: 30)
-                Image(systemName: item.isOrphanedBinary ? "exclamationmark.triangle.fill" : "bolt.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(item.isOrphanedBinary ? Color.red : item.scope.tintColor)
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill((item.isOrphanedBinary ? Color.red : item.scope.tintColor).opacity(0.14))
+                        .frame(width: 30, height: 30)
+                    Image(systemName: item.isOrphanedBinary ? "exclamationmark.triangle.fill" : "bolt.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(item.isOrphanedBinary ? Color.red : item.scope.tintColor)
+                }
             }
 
             VStack(alignment: .leading, spacing: 3) {
@@ -1304,18 +1321,14 @@ private struct ConsoleStartupItemRow: View {
 
                     if item.isOrphanedBinary {
                         pill("程序已卸载 · 僵尸残留", color: .red)
-                    } else if item.isRunning {
-                        pill("运行中", color: ConsoleTheme.accent)
+                    } else if item.isEnabled {
+                        pill(item.isRunning ? "已开启 · 运行中" : "已开启", color: ConsoleTheme.accent)
+                    } else {
+                        pill("已关闭", color: .secondary)
                     }
 
-                    if item.runAtLoad && !item.isOrphanedBinary {
-                        pill("开机自启", color: .secondary)
-                    }
-                    if item.keepAlive && !item.isOrphanedBinary {
+                    if item.keepAlive && item.isEnabled && !item.isOrphanedBinary {
                         pill("后台保活", color: .orange)
-                    }
-                    if item.isDisabledInPlist {
-                        pill("已禁用", color: .secondary)
                     }
                 }
 
@@ -1341,9 +1354,25 @@ private struct ConsoleStartupItemRow: View {
 
             Spacer(minLength: 8)
 
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 if let onTrash {
-                    ConsoleActionButton("移至废纸篓", variant: item.isOrphanedBinary ? .destructive : .standard, action: onTrash)
+                    ConsoleActionButton("清理残留", variant: .destructive, action: onTrash)
+                } else if let onToggleEnabled {
+                    if isToggling {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 40)
+                    } else {
+                        ConsoleSwitch(
+                            isOn: Binding(
+                                get: { item.isEnabled },
+                                set: { onToggleEnabled($0) }
+                            )
+                        )
+                    }
+                } else {
+                    ConsoleActionButton("系统设置", variant: .standard, action: onOpenSystemSettings)
+                        .help("系统级或 BTM 托管项受 macOS 权限保护，点击前往「登录项与扩展」调整")
                 }
 
                 Button(action: onReveal) {
