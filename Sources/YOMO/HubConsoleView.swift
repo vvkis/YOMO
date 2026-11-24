@@ -55,14 +55,14 @@ final class HubConsoleViewModel: ObservableObject {
 struct HubConsoleView: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var viewModel: HubConsoleViewModel
-    @ObservedObject var moduleSettings: ModuleSettings
-    @ObservedObject var duoBarStore: DuoBarStore
-    @ObservedObject var displayStore: DisplayHiDPIStore
-    @ObservedObject var keepAwakeStore: KeepAwakeStore
-    @ObservedObject var audioBluetoothStore: AudioBluetoothStore
-    @ObservedObject var scrollReverserStore: ScrollReverserStore
-    @ObservedObject var clipboardStore: ClipboardStore
-    @ObservedObject var keyboardLockStore: KeyboardLockStore
+    let moduleSettings: ModuleSettings
+    let duoBarStore: DuoBarStore
+    let displayStore: DisplayHiDPIStore
+    let keepAwakeStore: KeepAwakeStore
+    let audioBluetoothStore: AudioBluetoothStore
+    let scrollReverserStore: ScrollReverserStore
+    let clipboardStore: ClipboardStore
+    let keyboardLockStore: KeyboardLockStore
 
     var body: some View {
         let isDark = (colorScheme == .dark)

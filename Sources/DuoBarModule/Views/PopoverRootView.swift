@@ -10,13 +10,13 @@ import KeyboardLockModule
 public struct PopoverRootView: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject public var store: DuoBarStore
-    @ObservedObject public var moduleSettings: ModuleSettings
-    @ObservedObject public var displayStore: DisplayHiDPIStore
-    @ObservedObject public var keepAwakeStore: KeepAwakeStore
-    @ObservedObject public var audioBluetoothStore: AudioBluetoothStore
-    @ObservedObject public var scrollReverserStore: ScrollReverserStore
-    @ObservedObject public var clipboardStore: ClipboardStore
-    @ObservedObject public var keyboardLockStore: KeyboardLockStore
+    public let moduleSettings: ModuleSettings
+    public let displayStore: DisplayHiDPIStore
+    public let keepAwakeStore: KeepAwakeStore
+    public let audioBluetoothStore: AudioBluetoothStore
+    public let scrollReverserStore: ScrollReverserStore
+    public let clipboardStore: ClipboardStore
+    public let keyboardLockStore: KeyboardLockStore
     public let onDismiss: () -> Void
     public let onOpenConsole: (String?) -> Void
     public let onQuit: () -> Void
@@ -69,7 +69,6 @@ public struct PopoverRootView: View {
                 case .overview:
                     OverviewView(
                         store: store,
-                        prefs: store.prefs,
                         moduleSettings: moduleSettings,
                         displayStore: displayStore,
                         keepAwakeStore: keepAwakeStore,
@@ -164,7 +163,7 @@ public struct PopoverRootView: View {
             .animation(.spring(response: 0.34, dampingFraction: 0.88), value: store.currentPage)
             .animation(.spring(response: 0.30, dampingFraction: 0.88), value: store.showOtherNetworks)
         }
-        .frame(width: 356, height: 600, alignment: .top)
+        .frame(minWidth: 356, maxWidth: 356, maxHeight: .infinity, alignment: .top)
     }
 
     private func goBack() {

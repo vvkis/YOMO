@@ -9,8 +9,15 @@ public final class GlassPopoverPanel: NSPanel {
     private weak var anchorButton: NSStatusBarButton?
     private var screenObserver: NSObjectProtocol?
     private var isInDisplayTransition = false
+    private var isDismissing = false
+    private var presentationGeneration: UInt64 = 0
+    private var appliedAppearanceMode: GlassAppearanceMode?
     private var transitionWorkItem: DispatchWorkItem?
     public var onClose: (() -> Void)?
+
+    public var isEffectivelyVisible: Bool {
+        isVisible && !isDismissing
+    }
 
     public init<Content: View>(cardWidth: CGFloat = 316, rootView: Content) {
         self.cardWidth = cardWidth
@@ -59,6 +66,8 @@ public final class GlassPopoverPanel: NSPanel {
     }
 
     public func applyAppearance(_ mode: GlassAppearanceMode) {
+        guard appliedAppearanceMode != mode else { return }
+        appliedAppearanceMode = mode
         switch mode {
         case .dark:
             self.appearance = NSAppearance(named: .darkAqua)
@@ -143,10 +152,18 @@ public final class GlassPopoverPanel: NSPanel {
     private func finishDisplayTransition() {
         transitionWorkItem?.cancel()
         transitionWorkItem = nil
-        guard isInDisplayTransition, let button = anchorButton else {
+        guard isInDisplayTransition else { return }
+        guard let button = anchorButton else {
             isInDisplayTransition = false
+            isDismissing = false
+            alphaValue = 1.0
+            onClose?()
             return
         }
+
+        presentationGeneration &+= 1
+        let gen = presentationGeneration
+        isDismissing = false
 
         let targetFrame = computeFrame(button: button)
         var startFrame = targetFrame
@@ -164,12 +181,15 @@ public final class GlassPopoverPanel: NSPanel {
             animator().setFrame(targetFrame, display: true)
         }, completionHandler: { [weak self] in
             Task { @MainActor [weak self] in
-                self?.isInDisplayTransition = false
+                guard let self, self.presentationGeneration == gen else { return }
+                self.isInDisplayTransition = false
             }
         })
     }
 
     public func show(relativeTo button: NSStatusBarButton) {
+        presentationGeneration &+= 1
+        isDismissing = false
         isInDisplayTransition = false
         transitionWorkItem?.cancel()
         anchorButton = button
@@ -192,7 +212,10 @@ public final class GlassPopoverPanel: NSPanel {
     }
 
     public func dismissAnimated() {
-        guard isVisible else { return }
+        guard isVisible && !isDismissing else { return }
+        isDismissing = true
+        presentationGeneration &+= 1
+        let gen = presentationGeneration
         isInDisplayTransition = false
         transitionWorkItem?.cancel()
         var endFrame = frame
@@ -203,11 +226,13 @@ public final class GlassPopoverPanel: NSPanel {
             animator().alphaValue = 0.0
             animator().setFrame(endFrame, display: true)
         }, completionHandler: { [weak self] in
-            Task { @MainActor in
-                self?.anchorButton = nil
-                self?.orderOut(nil)
-                self?.alphaValue = 1.0
-                self?.onClose?()
+            Task { @MainActor [weak self] in
+                guard let self, self.presentationGeneration == gen else { return }
+                self.isDismissing = false
+                self.anchorButton = nil
+                self.orderOut(nil)
+                self.alphaValue = 1.0
+                self.onClose?()
             }
         })
     }

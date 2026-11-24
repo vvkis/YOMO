@@ -99,7 +99,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         // 2. Setup Borderless Native Liquid Glass Floating Panel
-        var panelRef: GlassPopoverPanel?
         let rootView = PopoverRootView(
             store: duoBarStore,
             moduleSettings: moduleSettings,
@@ -109,8 +108,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             scrollReverserStore: scrollReverserStore,
             clipboardStore: clipboardStore,
             keyboardLockStore: keyboardLockStore,
-            onDismiss: {
-                panelRef?.dismissAnimated()
+            onDismiss: { [weak self] in
+                self?.panel.dismissAnimated()
             },
             onOpenConsole: { [weak self] target in
                 self?.openHubConsole(sectionKey: target)
@@ -125,18 +124,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         let glassPanel = GlassPopoverPanel(cardWidth: 316, rootView: rootView)
         glassPanel.applyAppearance(moduleSettings.glassAppearance)
-        panelRef = glassPanel
         glassPanel.onClose = { [weak self] in
             self?.handlePanelClosed()
         }
         self.panel = glassPanel
 
+        var lastAppliedAppearance = moduleSettings.glassAppearance
         moduleSettings.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.panel.applyAppearance(self.moduleSettings.glassAppearance)
+                    let current = self.moduleSettings.glassAppearance
+                    guard current != lastAppliedAppearance else { return }
+                    lastAppliedAppearance = current
+                    self.panel.applyAppearance(current)
                 }
             }
             .store(in: &cancellables)
@@ -270,15 +272,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func togglePanel(_ sender: AnyObject?) {
         guard let button = statusItem.button else { return }
 
-        if panel.isVisible {
+        if panel.isEffectivelyVisible {
             panel.dismissAnimated()
         } else {
             duoBarStore.onPopoverOpened()
+            keepAwakeStore.setUIActive(true)
             if moduleSettings.hidpiEnabled {
                 displayStore.setUIActive(true)
                 displayStore.refreshDisplays()
             }
             if moduleSettings.audioBluetoothEnabled {
+                audioBluetoothStore.setUIActive(true)
                 audioBluetoothStore.refreshAudioDevices()
                 audioBluetoothStore.refreshBluetoothDevices()
             }
@@ -300,16 +304,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func toggleClipboardFromHotKey() {
         guard moduleSettings.clipboardEnabled, let button = statusItem.button else { return }
 
-        if panel.isVisible && duoBarStore.currentPage == .clipboard {
+        if panel.isEffectivelyVisible && duoBarStore.currentPage == .clipboard {
             panel.dismissAnimated()
             return
         }
 
         duoBarStore.onPopoverOpened()
+        keepAwakeStore.setUIActive(true)
+        audioBluetoothStore.setUIActive(true)
         clipboardStore.setUIActive(true)
         duoBarStore.navigate(to: .clipboard)
 
-        if !panel.isVisible {
+        if !panel.isEffectivelyVisible {
             button.highlight(true)
             panel.show(relativeTo: button)
             startOutsideClickMonitor()
@@ -321,16 +327,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stopOutsideClickMonitor()
         duoBarStore.resetNavigation()
         moduleSettings.isEditingOverviewLayout = false
-        moduleSettings.draggingOverviewTile = nil
-        moduleSettings.dragTranslation = .zero
         clipboardStore.searchQuery = ""
         let consoleVisible = (consoleWindow?.isVisible == true)
         clipboardStore.setUIActive(consoleVisible)
         displayStore.setUIActive(consoleVisible)
+        keepAwakeStore.setUIActive(consoleVisible)
+        audioBluetoothStore.setUIActive(consoleVisible)
     }
 
     private func openHubConsole(sectionKey: String?) {
-        if panel.isVisible {
+        if panel.isEffectivelyVisible {
             panel.dismissAnimated()
         }
         if let key = sectionKey, let sec = ConsoleSection(rawValue: key) {
@@ -384,9 +390,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     self.duoBarStore.setConsoleOpen(false)
-                    let popoverVisible = self.panel.isVisible
+                    let popoverVisible = self.panel.isEffectivelyVisible
                     self.clipboardStore.setUIActive(popoverVisible)
                     self.displayStore.setUIActive(popoverVisible)
+                    self.keepAwakeStore.setUIActive(popoverVisible)
+                    self.audioBluetoothStore.setUIActive(popoverVisible)
                     if let obs = self.consoleCloseObserver {
                         NotificationCenter.default.removeObserver(obs)
                         self.consoleCloseObserver = nil
@@ -401,6 +409,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         duoBarStore.setConsoleOpen(true)
         clipboardStore.setUIActive(true)
         displayStore.setUIActive(true)
+        keepAwakeStore.setUIActive(true)
+        audioBluetoothStore.setUIActive(true)
         NSApp.activate()
         consoleWindow?.makeKeyAndOrderFront(nil)
     }
@@ -409,7 +419,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stopOutsideClickMonitor()
         eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             Task { @MainActor in
-                if self?.panel.isVisible == true {
+                if self?.panel.isEffectivelyVisible == true {
                     self?.panel.dismissAnimated()
                 }
             }

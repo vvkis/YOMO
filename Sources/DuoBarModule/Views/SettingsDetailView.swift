@@ -124,5 +124,8 @@ struct SettingsDetailView: View {
             .glassBentoCard(cornerRadius: 15)
         }
         .padding(14)
+        .onAppear {
+            store.refreshLaunchAtLoginState()
+        }
     }
 }

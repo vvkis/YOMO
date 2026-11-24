@@ -81,6 +81,9 @@ public struct DuoBarConsoleView: View {
                 }
             }
         }
+        .onAppear {
+            store.refreshLaunchAtLoginState()
+        }
     }
 
     private func styleDescription(_ style: BadgeStyle) -> String {

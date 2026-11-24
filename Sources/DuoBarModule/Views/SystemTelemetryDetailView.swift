@@ -241,7 +241,7 @@ struct SystemTelemetryDetailView: View {
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, 16)
-        } else if let exactPort = store.parsedSearchedPort, !ports.contains(where: { $0.port == exactPort }) {
+        } else if let exactPort = store.parsedSearchedPort, ports.isEmpty {
             VStack(spacing: 6) {
                 HStack(spacing: 5) {
                     Image(systemName: "checkmark.circle.fill")
@@ -278,6 +278,18 @@ struct SystemTelemetryDetailView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 14)
         } else {
+            if let exactPort = store.parsedSearchedPort, !ports.contains(where: { $0.port == exactPort }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.green)
+                    Text("端口 :\(exactPort) 当前空闲 · 以下为相关匹配")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                .padding(.horizontal, 4)
+            }
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 3) {
                     ForEach(ports) { item in
@@ -542,6 +554,7 @@ private struct MemorySegmentedBar: View {
                         Rectangle().fill(Color.purple).frame(width: cW)
                     }
                 }
+                .frame(width: w, alignment: .leading)
                 .clipShape(Capsule())
             }
         }

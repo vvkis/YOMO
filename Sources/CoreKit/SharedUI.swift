@@ -119,10 +119,12 @@ public final class ModuleSettings: ObservableObject {
         willSet { objectWillChange.send() }
     }
 
+    private var suppressTileOrderPersistence = false
+
     @Published public var overviewTileOrder: [OverviewTileID] {
         didSet {
-            let rawList = overviewTileOrder.map(\.rawValue)
-            UserDefaults.standard.set(rawList, forKey: Self.tileOrderStorageKey)
+            guard !suppressTileOrderPersistence else { return }
+            persistOverviewTileOrder()
         }
     }
 
@@ -137,12 +139,11 @@ public final class ModuleSettings: ObservableObject {
     }
 
     @Published public var isEditingOverviewLayout: Bool = false
-    @Published public var draggingOverviewTile: OverviewTileID? = nil
-    @Published public var dragTranslation: CGSize = .zero
-    public var dragOriginFrame: CGRect = .zero
-    public var lastDragEndTime: TimeInterval = 0
-    public var lastSwapTarget: OverviewTileID? = nil
-    public var lastSwapTime: TimeInterval = 0
+
+    public func persistOverviewTileOrder() {
+        let rawList = overviewTileOrder.map(\.rawValue)
+        UserDefaults.standard.set(rawList, forKey: Self.tileOrderStorageKey)
+    }
 
     public var glassAppearance: GlassAppearanceMode {
         get { GlassAppearanceMode(rawValue: glassAppearanceRaw) ?? .dark }
@@ -216,7 +217,12 @@ public final class ModuleSettings: ObservableObject {
         return true
     }
 
-    public func moveOverviewTile(from source: OverviewTileID, to target: OverviewTileID, placeAfter: Bool? = nil) {
+    public func moveOverviewTile(
+        from source: OverviewTileID,
+        to target: OverviewTileID,
+        placeAfter: Bool? = nil,
+        persist: Bool = true
+    ) {
         guard source != target,
               let fromIdx = overviewTileOrder.firstIndex(of: source),
               let toIdx = overviewTileOrder.firstIndex(of: target) else {
@@ -234,11 +240,13 @@ public final class ModuleSettings: ObservableObject {
         } else {
             updated.insert(item, at: toIdx)
         }
+        suppressTileOrderPersistence = !persist
         overviewTileOrder = updated
+        suppressTileOrderPersistence = false
     }
 
     /// Commits the packed visual order back into `overviewTileOrder` so array order always matches visual grid order.
-    public func commitPackedVisualOrder(_ packedEnabledOrder: [OverviewTileID]) {
+    public func commitPackedVisualOrder(_ packedEnabledOrder: [OverviewTileID], persist: Bool = true) {
         var result: [OverviewTileID] = []
         var enabledIter = packedEnabledOrder.makeIterator()
         let enabledSet = Set(packedEnabledOrder)
@@ -258,7 +266,11 @@ public final class ModuleSettings: ObservableObject {
             }
         }
         if result != overviewTileOrder {
+            suppressTileOrderPersistence = !persist
             overviewTileOrder = result
+            suppressTileOrderPersistence = false
+        } else if persist {
+            persistOverviewTileOrder()
         }
     }
 

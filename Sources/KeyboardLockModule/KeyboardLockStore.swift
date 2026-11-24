@@ -59,7 +59,10 @@ private final class KeyboardLockTapEngine {
             return false
         }
 
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            CFMachPortInvalidate(tap)
+            return false
+        }
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
 
@@ -132,6 +135,7 @@ private final class KeyboardLockTapEngine {
 private final class KeyboardLockHUDPanel: NSPanel {
     private let panelWidth: CGFloat = 312
     private let panelHeight: CGFloat = 62
+    private var animationGeneration: UInt64 = 0
 
     init(store: KeyboardLockStore) {
         super.init(
@@ -160,6 +164,7 @@ private final class KeyboardLockHUDPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     func showCenteredNearBottom() {
+        animationGeneration &+= 1
         let targetScreen = NSScreen.main ?? NSScreen.screens.first
         if let screen = targetScreen {
             let vf = screen.visibleFrame
@@ -176,16 +181,23 @@ private final class KeyboardLockHUDPanel: NSPanel {
         }
     }
 
-    func hideSmoothly() {
-        guard isVisible else { return }
+    func hideSmoothly(onHidden: (@MainActor () -> Void)? = nil) {
+        animationGeneration &+= 1
+        let gen = animationGeneration
+        guard isVisible else {
+            onHidden?()
+            return
+        }
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.14
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
             animator().alphaValue = 0.0
         }, completionHandler: { [weak self] in
             Task { @MainActor [weak self] in
-                self?.orderOut(nil)
-                self?.alphaValue = 1.0
+                guard let self, self.animationGeneration == gen else { return }
+                self.orderOut(nil)
+                self.alphaValue = 1.0
+                onHidden?()
             }
         })
     }
@@ -255,6 +267,7 @@ public final class KeyboardLockStore: ObservableObject {
     private var engine: KeyboardLockTapEngine?
     private var hudPanel: KeyboardLockHUDPanel?
     private var sleepObserver: NSObjectProtocol?
+    private var activeObserver: NSObjectProtocol?
 
     public init() {
         self.hasAccessibilityPermission = AXIsProcessTrusted()
@@ -282,12 +295,26 @@ public final class KeyboardLockStore: ObservableObject {
                 self?.unlock()
             }
         }
+
+        // Auto-refresh Accessibility status when returning from System Settings
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshPermissionState()
+            }
+        }
     }
 
     deinit {
         engine?.stop()
         if let sleepObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver)
+        }
+        if let activeObserver {
+            NotificationCenter.default.removeObserver(activeObserver)
         }
     }
 
@@ -300,8 +327,17 @@ public final class KeyboardLockStore: ObservableObject {
 
     public func refreshPermissionState() {
         hasAccessibilityPermission = AXIsProcessTrusted()
-        if isLocked && !(engine?.isRunning ?? false) {
-            unlock()
+        if !hasAccessibilityPermission {
+            if isLocked {
+                unlock()
+            }
+        } else {
+            if statusMessage != nil {
+                statusMessage = nil
+            }
+            if isLocked && !(engine?.isRunning ?? false) {
+                unlock()
+            }
         }
     }
 
@@ -355,7 +391,11 @@ public final class KeyboardLockStore: ObservableObject {
         if isLocked {
             isLocked = false
         }
-        hudPanel?.hideSmoothly()
+        hudPanel?.hideSmoothly { [weak self] in
+            guard let self, !self.isLocked else { return }
+            self.hudPanel?.contentView = nil
+            self.hudPanel = nil
+        }
     }
 
     public func requestAccessibilityPermission() {

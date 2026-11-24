@@ -156,7 +156,7 @@ struct WiFiDetailView: View {
                                         isConnecting: isConnecting,
                                         badgeText: isActive ? "已连接" : net.channelBand
                                     ) {
-                                        if !isActive {
+                                        if !isActive && store.wifi.connectingSSID == nil {
                                             store.connectKnownWiFi(ssid: net.ssid)
                                         }
                                     }
@@ -224,6 +224,7 @@ struct WiFiDetailView: View {
                                             isConnecting: store.wifi.connectingSSID == net.ssid,
                                             badgeText: net.channelBand
                                         ) {
+                                            guard store.wifi.connectingSSID == nil else { return }
                                             if net.isSecured {
                                                 store.passwordTargetSSID = net.ssid
                                                 store.passwordInput = ""
@@ -245,6 +246,13 @@ struct WiFiDetailView: View {
                                     SecureField("Wi-Fi 密码", text: $store.passwordInput)
                                         .textFieldStyle(.roundedBorder)
                                         .controlSize(.small)
+                                        .onSubmit {
+                                            guard !store.passwordInput.isEmpty, store.wifi.connectingSSID == nil else { return }
+                                            let pwd = store.passwordInput
+                                            store.passwordTargetSSID = nil
+                                            store.passwordInput = ""
+                                            store.connectNearbyWiFi(ssid: target, password: pwd)
+                                        }
                                     Button("连接") {
                                         let pwd = store.passwordInput
                                         store.passwordTargetSSID = nil
@@ -253,8 +261,10 @@ struct WiFiDetailView: View {
                                     }
                                     .buttonStyle(.borderedProminent)
                                     .controlSize(.small)
+                                    .disabled(store.passwordInput.isEmpty || store.wifi.connectingSSID != nil)
                                     Button("取消") {
                                         store.passwordTargetSSID = nil
+                                        store.passwordInput = ""
                                     }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)
@@ -291,6 +301,10 @@ struct WiFiDetailView: View {
         .padding(14)
         .onAppear {
             store.scanNearbyWiFi()
+        }
+        .onDisappear {
+            store.passwordTargetSSID = nil
+            store.passwordInput = ""
         }
     }
 

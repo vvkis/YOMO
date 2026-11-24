@@ -22,9 +22,24 @@ private struct BentoGridLayout {
     let totalHeight: CGFloat
 }
 
+@MainActor
+private final class OverviewDragState: ObservableObject {
+    @Published var draggingTile: OverviewTileID? = nil
+    @Published var dragTranslation: CGSize = .zero
+    var dragOriginFrame: CGRect = .zero
+    var lastDragEndTime: TimeInterval = 0
+    var lastSwapTarget: OverviewTileID? = nil
+    var lastSwapTime: TimeInterval = 0
+
+    func reset() {
+        draggingTile = nil
+        dragTranslation = .zero
+        lastSwapTarget = nil
+    }
+}
+
 struct OverviewView: View {
     @ObservedObject var store: DuoBarStore
-    @ObservedObject var prefs: AppPreferences
     @ObservedObject var moduleSettings: ModuleSettings
     @ObservedObject var displayStore: DisplayHiDPIStore
     @ObservedObject var keepAwakeStore: KeepAwakeStore
@@ -37,6 +52,7 @@ struct OverviewView: View {
     let onOpenConsole: (String?) -> Void
     let onQuit: () -> Void
 
+    @StateObject private var dragState = OverviewDragState()
     @StateObject private var wifiHover = HoverTracker()
     @StateObject private var audioHover = HoverTracker()
     @StateObject private var batHover = HoverTracker()
@@ -169,8 +185,7 @@ struct OverviewView: View {
                     Button {
                         withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.86)) {
                             moduleSettings.isEditingOverviewLayout = false
-                            moduleSettings.draggingOverviewTile = nil
-                            moduleSettings.dragTranslation = .zero
+                            dragState.reset()
                         }
                     } label: {
                         Text("完成")
@@ -191,16 +206,18 @@ struct OverviewView: View {
             }
 
             // Flat Single-Layer ZStack Bento Canvas (Zero view destruction during cross-row reordering!)
-            ZStack(alignment: .topLeading) {
+            // Automatically becomes scrollable when enlarged 4× tiles exceed the panel viewport so the footer stays reachable.
+            let maxCanvasHeight: CGFloat = isEditing ? 464 : 496
+            let bentoCanvas = ZStack(alignment: .topLeading) {
                 ForEach(activeTiles, id: \.self) { tile in
                     if let rect = layout.frames[tile] {
                         let span = layout.spans[tile] ?? tile.defaultColSpan
-                        let isDraggingThis = (moduleSettings.draggingOverviewTile == tile)
+                        let isDraggingThis = (dragState.draggingTile == tile)
                         let displayX = isDraggingThis
-                            ? (moduleSettings.dragOriginFrame.minX + moduleSettings.dragTranslation.width)
+                            ? (dragState.dragOriginFrame.minX + dragState.dragTranslation.width)
                             : rect.minX
                         let displayY = isDraggingThis
-                            ? (moduleSettings.dragOriginFrame.minY + moduleSettings.dragTranslation.height)
+                            ? (dragState.dragOriginFrame.minY + dragState.dragTranslation.height)
                             : rect.minY
 
                         tileView(for: tile, span: span, height: rect.height, isEditing: isEditing)
@@ -208,6 +225,7 @@ struct OverviewView: View {
                             .overlay(alignment: .topTrailing) {
                                 if isEditing && tile.canResizeSpan {
                                     Button {
+                                        guard dragState.draggingTile == nil else { return }
                                         withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.84)) {
                                             moduleSettings.cycleTileSpan(tile)
                                         }
@@ -247,49 +265,50 @@ struct OverviewView: View {
                             .zIndex(isDraggingThis ? 20 : 1)
                             .offset(x: displayX, y: displayY)
                             .simultaneousGesture(
-                                DragGesture(minimumDistance: isEditing ? 3 : 7, coordinateSpace: .named("BentoCanvas"))
+                                DragGesture(minimumDistance: isEditing ? 5 : 7, coordinateSpace: .named("BentoCanvas"))
                                     .onChanged { value in
                                         // In normal overview mode, allow direct drag-to-reorder on all tiles except volume slider;
                                         // resizing is strictly restricted to the dedicated layout-editing mode.
                                         guard isEditing || tile != .volume else { return }
-                                        if moduleSettings.draggingOverviewTile != tile {
-                                            moduleSettings.commitPackedVisualOrder(layout.visualOrder)
-                                            moduleSettings.draggingOverviewTile = tile
-                                            moduleSettings.dragOriginFrame = rect
-                                            moduleSettings.lastSwapTarget = nil
+                                        if dragState.draggingTile != tile {
+                                            moduleSettings.commitPackedVisualOrder(layout.visualOrder, persist: false)
+                                            dragState.draggingTile = tile
+                                            dragState.dragOriginFrame = rect
+                                            dragState.lastSwapTarget = nil
                                         }
-                                        moduleSettings.dragTranslation = value.translation
+                                        dragState.dragTranslation = value.translation
 
                                         let currentCenter = CGPoint(
-                                            x: moduleSettings.dragOriginFrame.midX + value.translation.width,
-                                            y: moduleSettings.dragOriginFrame.midY + value.translation.height
+                                            x: dragState.dragOriginFrame.midX + value.translation.width,
+                                            y: dragState.dragOriginFrame.midY + value.translation.height
                                         )
                                         let now = Date().timeIntervalSinceReferenceDate
                                         if let drop = findTargetDrop(at: currentCenter, excluding: tile, in: layout),
                                            wouldMoveChangeOrder(from: tile, to: drop.target, placeAfter: drop.placeAfter) {
-                                            let isCoolingDown = (drop.target == moduleSettings.lastSwapTarget)
-                                                && (now - moduleSettings.lastSwapTime < 0.18)
+                                            let isCoolingDown = (drop.target == dragState.lastSwapTarget)
+                                                && (now - dragState.lastSwapTime < 0.18)
                                             if !isCoolingDown {
-                                                moduleSettings.lastSwapTarget = drop.target
-                                                moduleSettings.lastSwapTime = now
+                                                dragState.lastSwapTarget = drop.target
+                                                dragState.lastSwapTime = now
                                                 withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.82)) {
                                                     moduleSettings.moveOverviewTile(
                                                         from: tile,
                                                         to: drop.target,
-                                                        placeAfter: drop.placeAfter
+                                                        placeAfter: drop.placeAfter,
+                                                        persist: false
                                                     )
                                                 }
                                             }
                                         }
                                     }
                                     .onEnded { _ in
-                                        guard moduleSettings.draggingOverviewTile == tile else { return }
-                                        moduleSettings.lastDragEndTime = Date().timeIntervalSinceReferenceDate
-                                        moduleSettings.lastSwapTarget = nil
+                                        guard dragState.draggingTile == tile else { return }
+                                        dragState.lastDragEndTime = Date().timeIntervalSinceReferenceDate
+                                        dragState.lastSwapTarget = nil
                                         withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.84)) {
-                                            moduleSettings.commitPackedVisualOrder(gridLayout.visualOrder)
-                                            moduleSettings.draggingOverviewTile = nil
-                                            moduleSettings.dragTranslation = .zero
+                                            moduleSettings.commitPackedVisualOrder(gridLayout.visualOrder, persist: true)
+                                            dragState.draggingTile = nil
+                                            dragState.dragTranslation = .zero
                                         }
                                     },
                                 including: isEditing ? .all : (tile == .volume ? .none : .all)
@@ -299,8 +318,7 @@ struct OverviewView: View {
                                     withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.84)) {
                                         moduleSettings.isEditingOverviewLayout.toggle()
                                         if !moduleSettings.isEditingOverviewLayout {
-                                            moduleSettings.draggingOverviewTile = nil
-                                            moduleSettings.dragTranslation = .zero
+                                            dragState.reset()
                                         }
                                     }
                                 }
@@ -329,6 +347,16 @@ struct OverviewView: View {
             .coordinateSpace(name: "BentoCanvas")
             .frame(width: gridTotalWidth, height: layout.totalHeight, alignment: .topLeading)
 
+            if layout.totalHeight > maxCanvasHeight {
+                ScrollView(.vertical, showsIndicators: false) {
+                    bentoCanvas
+                }
+                .scrollDisabled(dragState.draggingTile != nil)
+                .frame(width: gridTotalWidth, height: maxCanvasHeight)
+            } else {
+                bentoCanvas
+            }
+
             // Integrated Utility Footer
             HStack {
                 Button {
@@ -346,8 +374,7 @@ struct OverviewView: View {
                     withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.84)) {
                         moduleSettings.isEditingOverviewLayout.toggle()
                         if !moduleSettings.isEditingOverviewLayout {
-                            moduleSettings.draggingOverviewTile = nil
-                            moduleSettings.dragTranslation = .zero
+                            dragState.reset()
                         }
                     }
                 } label: {
@@ -387,10 +414,9 @@ struct OverviewView: View {
         }
         .padding(13)
         .onDisappear {
-            if moduleSettings.draggingOverviewTile != nil || moduleSettings.dragTranslation != .zero {
-                moduleSettings.draggingOverviewTile = nil
-                moduleSettings.dragTranslation = .zero
-                moduleSettings.lastSwapTarget = nil
+            if dragState.draggingTile != nil || dragState.dragTranslation != .zero {
+                moduleSettings.persistOverviewTileOrder()
+                dragState.reset()
             }
         }
     }
@@ -445,7 +471,8 @@ struct OverviewView: View {
                         return (target: tile, placeAfter: true)
                     }
                 }
-                return (target: tile, placeAfter: nil)
+                // Explicit vertical placement prevents reverse-jump oscillation on unmoved full-width rows
+                return (target: tile, placeAfter: point.y > rect.midY)
             }
         }
 
@@ -504,8 +531,8 @@ struct OverviewView: View {
     }
 
     private func canTriggerTileTap(isEditing: Bool) -> Bool {
-        guard !isEditing, moduleSettings.draggingOverviewTile == nil else { return false }
-        return (Date().timeIntervalSinceReferenceDate - moduleSettings.lastDragEndTime) > 0.16
+        guard !isEditing, dragState.draggingTile == nil else { return false }
+        return (Date().timeIntervalSinceReferenceDate - dragState.lastDragEndTime) > 0.16
     }
 
     // MARK: - Individual Bento Tile Builders (Adapt gracefully to 1x / 2x / 3x / 4x spans)
@@ -539,7 +566,7 @@ struct OverviewView: View {
     private func wifiTile(span: Int, height: CGFloat, isEditing: Bool) -> some View {
         HStack(spacing: 8) {
             Button {
-                if !isEditing {
+                if canTriggerTileTap(isEditing: isEditing) {
                     store.setWiFiPower(!store.wifi.isPoweredOn)
                 }
             } label: {
@@ -859,7 +886,7 @@ struct OverviewView: View {
                 .opacity(0.45)
 
             Button {
-                if !isEditing {
+                if canTriggerTileTap(isEditing: isEditing) {
                     onNavigate(.scrollReverser)
                 }
             } label: {

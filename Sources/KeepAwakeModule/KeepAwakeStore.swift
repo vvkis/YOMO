@@ -31,13 +31,24 @@ public final class KeepAwakeStore: ObservableObject {
     private var hasAssertion = false
     private var expirationDate: Date?
     private var countdownTimer: Timer?
+    private var isUIActive: Bool = false
 
     public init() {}
 
     deinit {
+        countdownTimer?.invalidate()
         if hasAssertion {
             IOPMAssertionRelease(assertionID)
         }
+    }
+
+    public func setUIActive(_ active: Bool) {
+        guard isUIActive != active else { return }
+        isUIActive = active
+        if active {
+            updateRemainingTime()
+        }
+        rescheduleTimerIfNeeded()
     }
 
     public func toggle() {
@@ -91,11 +102,35 @@ public final class KeepAwakeStore: ObservableObject {
             let end = Date().addingTimeInterval(TimeInterval(timeoutSeconds))
             expirationDate = end
             remainingSeconds = timeoutSeconds
+            rescheduleTimerIfNeeded()
+        }
+    }
+
+    private func rescheduleTimerIfNeeded() {
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+        guard isActive, let end = expirationDate else { return }
+
+        if isUIActive {
+            // 1Hz UI countdown ONLY while popover or console is actually visible
             let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     self?.updateRemainingTime()
                 }
             }
+            timer.tolerance = 0.2
+            RunLoop.main.add(timer, forMode: .common)
+            countdownTimer = timer
+        } else {
+            // While hidden, zero 1Hz wakeups: schedule a single one-shot cleanup timer at expiry
+            // (the kernel already enforces kIOPMAssertionTimeoutKey independently).
+            let delay = max(1.0, end.timeIntervalSinceNow)
+            let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.updateRemainingTime()
+                }
+            }
+            timer.tolerance = 1.0
             RunLoop.main.add(timer, forMode: .common)
             countdownTimer = timer
         }
