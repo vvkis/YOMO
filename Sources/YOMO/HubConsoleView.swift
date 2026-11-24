@@ -7,6 +7,7 @@ import AudioBluetoothModule
 import ScrollReverserModule
 import ClipboardModule
 import KeyboardLockModule
+import SpaceCleanerModule
 
 public enum ConsoleSection: String, CaseIterable, Identifiable {
     case dashboard = "dashboard"
@@ -17,6 +18,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
     case scrollReverser = "scrollReverser"
     case clipboard = "clipboard"
     case keyboardLock = "keyboardLock"
+    case spaceCleaner = "spaceCleaner"
 
     public var id: String { rawValue }
 
@@ -30,6 +32,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
         case .scrollReverser: return "滚轮翻转"
         case .clipboard: return "剪贴板"
         case .keyboardLock: return "键盘锁"
+        case .spaceCleaner: return "空间清理"
         }
     }
 
@@ -43,6 +46,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable {
         case .scrollReverser: return "computermouse"
         case .clipboard: return "doc.on.clipboard"
         case .keyboardLock: return "keyboard"
+        case .spaceCleaner: return "sparkles"
         }
     }
 }
@@ -63,6 +67,7 @@ struct HubConsoleView: View {
     let scrollReverserStore: ScrollReverserStore
     let clipboardStore: ClipboardStore
     let keyboardLockStore: KeyboardLockStore
+    let spaceCleanerStore: SpaceCleanerStore
 
     var body: some View {
         let isDark = (colorScheme == .dark)
@@ -128,6 +133,7 @@ struct HubConsoleView: View {
                         scrollReverserStore: scrollReverserStore,
                         clipboardStore: clipboardStore,
                         keyboardLockStore: keyboardLockStore,
+                        spaceCleanerStore: spaceCleanerStore,
                         onSelect: { viewModel.selectedSection = $0 }
                     )
                 case .duobar:
@@ -144,6 +150,8 @@ struct HubConsoleView: View {
                     ClipboardConsoleView(store: clipboardStore, moduleSettings: moduleSettings)
                 case .keyboardLock:
                     KeyboardLockConsoleView(store: keyboardLockStore, moduleSettings: moduleSettings)
+                case .spaceCleaner:
+                    SpaceCleanerConsoleView(store: spaceCleanerStore, moduleSettings: moduleSettings)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -163,6 +171,7 @@ private struct DashboardHomeView: View {
     @ObservedObject var scrollReverserStore: ScrollReverserStore
     @ObservedObject var clipboardStore: ClipboardStore
     @ObservedObject var keyboardLockStore: KeyboardLockStore
+    @ObservedObject var spaceCleanerStore: SpaceCleanerStore
     let onSelect: (ConsoleSection) -> Void
 
     var body: some View {
@@ -277,6 +286,18 @@ private struct DashboardHomeView: View {
                         }
                     ),
                     onOpen: { onSelect(.keyboardLock) }
+                )
+
+                ConsoleRowDivider()
+
+                DashboardModuleRow(
+                    icon: "sparkles",
+                    tint: ConsoleTheme.accent,
+                    title: "空间清理（原生安全规则）",
+                    subtitle: spaceCleanerStore.overviewSubtitle,
+                    badgeText: nil,
+                    isOn: $moduleSettings.spaceCleanerEnabled,
+                    onOpen: { onSelect(.spaceCleaner) }
                 )
             }
         }

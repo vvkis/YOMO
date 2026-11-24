@@ -88,8 +88,17 @@ let package = Package(
             ]
         ),
         .target(
+            name: "SpaceCleanerModule",
+            dependencies: ["CoreKit"],
+            path: "Sources/SpaceCleanerModule",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("SwiftUI")
+            ]
+        ),
+        .target(
             name: "DuoBarModule",
-            dependencies: ["CoreKit", "DisplayHiDPIModule", "KeepAwakeModule", "AudioBluetoothModule", "ScrollReverserModule", "ClipboardModule", "KeyboardLockModule"],
+            dependencies: ["CoreKit", "DisplayHiDPIModule", "KeepAwakeModule", "AudioBluetoothModule", "ScrollReverserModule", "ClipboardModule", "KeyboardLockModule", "SpaceCleanerModule"],
             path: "Sources/DuoBarModule",
             linkerSettings: [
                 .linkedFramework("AppKit"),
@@ -103,7 +112,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "YOMO",
-            dependencies: ["CoreKit", "DuoBarModule", "DisplayHiDPIModule", "KeepAwakeModule", "AudioBluetoothModule", "ScrollReverserModule", "ClipboardModule", "KeyboardLockModule"],
+            dependencies: ["CoreKit", "DuoBarModule", "DisplayHiDPIModule", "KeepAwakeModule", "AudioBluetoothModule", "ScrollReverserModule", "ClipboardModule", "KeyboardLockModule", "SpaceCleanerModule"],
             path: "Sources/YOMO",
             linkerSettings: [
                 .linkedFramework("AppKit"),

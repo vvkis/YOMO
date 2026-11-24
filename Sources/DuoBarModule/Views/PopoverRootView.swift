@@ -6,6 +6,7 @@ import AudioBluetoothModule
 import ScrollReverserModule
 import ClipboardModule
 import KeyboardLockModule
+import SpaceCleanerModule
 
 public struct PopoverRootView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -17,6 +18,7 @@ public struct PopoverRootView: View {
     public let scrollReverserStore: ScrollReverserStore
     public let clipboardStore: ClipboardStore
     public let keyboardLockStore: KeyboardLockStore
+    public let spaceCleanerStore: SpaceCleanerStore
     public let onDismiss: () -> Void
     public let onOpenConsole: (String?) -> Void
     public let onQuit: () -> Void
@@ -30,6 +32,7 @@ public struct PopoverRootView: View {
         scrollReverserStore: ScrollReverserStore,
         clipboardStore: ClipboardStore,
         keyboardLockStore: KeyboardLockStore,
+        spaceCleanerStore: SpaceCleanerStore,
         onDismiss: @escaping () -> Void,
         onOpenConsole: @escaping (String?) -> Void,
         onQuit: @escaping () -> Void
@@ -42,6 +45,7 @@ public struct PopoverRootView: View {
         self.scrollReverserStore = scrollReverserStore
         self.clipboardStore = clipboardStore
         self.keyboardLockStore = keyboardLockStore
+        self.spaceCleanerStore = spaceCleanerStore
         self.onDismiss = onDismiss
         self.onOpenConsole = onOpenConsole
         self.onQuit = onQuit
@@ -76,6 +80,7 @@ public struct PopoverRootView: View {
                         scrollReverserStore: scrollReverserStore,
                         clipboardStore: clipboardStore,
                         keyboardLockStore: keyboardLockStore,
+                        spaceCleanerStore: spaceCleanerStore,
                         onNavigate: { target in
                             withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
                                 store.navigate(to: target)
@@ -125,6 +130,14 @@ public struct PopoverRootView: View {
                         onBack: goBack,
                         onItemCopied: onDismiss,
                         onOpenConsole: { onOpenConsole("clipboard") }
+                    )
+                    .transition(pageTransition)
+
+                case .spaceCleaner:
+                    SpaceCleanerPopoverView(
+                        store: spaceCleanerStore,
+                        onBack: goBack,
+                        onOpenConsole: { onOpenConsole("spaceCleaner") }
                     )
                     .transition(pageTransition)
 

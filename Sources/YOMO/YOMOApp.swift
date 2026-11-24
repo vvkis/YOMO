@@ -9,6 +9,7 @@ import AudioBluetoothModule
 import ScrollReverserModule
 import ClipboardModule
 import KeyboardLockModule
+import SpaceCleanerModule
 
 @main
 struct YOMOLauncher {
@@ -55,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var scrollReverserStore: ScrollReverserStore!
     private var clipboardStore: ClipboardStore!
     private var keyboardLockStore: KeyboardLockStore!
+    private var spaceCleanerStore: SpaceCleanerStore!
 
     private var eventMonitor: Any?
     private var lastRenderKey: BadgeRenderKey?
@@ -76,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clipboardStore.syncWithModuleEnabled(moduleSettings.clipboardEnabled)
         keyboardLockStore = KeyboardLockStore()
         keyboardLockStore.syncWithModuleEnabled(moduleSettings.keyboardLockEnabled)
+        spaceCleanerStore = SpaceCleanerStore()
 
         // 1. Setup single Menu Bar Status Item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -108,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             scrollReverserStore: scrollReverserStore,
             clipboardStore: clipboardStore,
             keyboardLockStore: keyboardLockStore,
+            spaceCleanerStore: spaceCleanerStore,
             onDismiss: { [weak self] in
                 self?.panel.dismissAnimated()
             },
@@ -119,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.scrollReverserStore.deactivate(persistPreference: false)
                 self?.clipboardStore.stop()
                 self?.keyboardLockStore.unlock()
+                self?.spaceCleanerStore.cancelScan()
                 NSApp.terminate(nil)
             }
         )
@@ -168,6 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scrollReverserStore?.deactivate(persistPreference: false)
         clipboardStore?.stop()
         keyboardLockStore?.unlock()
+        spaceCleanerStore?.cancelScan()
     }
 
     private func setupMainMenu() {
@@ -355,7 +361,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 audioBluetoothStore: audioBluetoothStore,
                 scrollReverserStore: scrollReverserStore,
                 clipboardStore: clipboardStore,
-                keyboardLockStore: keyboardLockStore
+                keyboardLockStore: keyboardLockStore,
+                spaceCleanerStore: spaceCleanerStore
             )
             let win = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 820, height: 560),

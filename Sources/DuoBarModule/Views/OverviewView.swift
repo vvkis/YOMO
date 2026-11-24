@@ -6,6 +6,7 @@ import AudioBluetoothModule
 import ScrollReverserModule
 import ClipboardModule
 import KeyboardLockModule
+import SpaceCleanerModule
 
 private struct BentoRowBand {
     let minY: CGFloat
@@ -47,6 +48,7 @@ struct OverviewView: View {
     @ObservedObject var scrollReverserStore: ScrollReverserStore
     @ObservedObject var clipboardStore: ClipboardStore
     @ObservedObject var keyboardLockStore: KeyboardLockStore
+    @ObservedObject var spaceCleanerStore: SpaceCleanerStore
     let onNavigate: (PopoverPage) -> Void
     let onDismiss: () -> Void
     let onOpenConsole: (String?) -> Void
@@ -61,6 +63,7 @@ struct OverviewView: View {
     @StateObject private var scrollHover = HoverTracker()
     @StateObject private var keyLockHover = HoverTracker()
     @StateObject private var clipHover = HoverTracker()
+    @StateObject private var spaceCleanerHover = HoverTracker()
     @StateObject private var telemetryHover = HoverTracker()
 
     private let gridTotalWidth: CGFloat = 290
@@ -143,7 +146,7 @@ struct OverviewView: View {
         if tiles.contains(.battery) { return 58 }
         if tiles.contains(.wifi) || tiles.contains(.bluetoothAudio) { return 54 }
         if tiles.contains(.scrollReverser) { return 50 }
-        if tiles.contains(.clipboard) { return 48 }
+        if tiles.contains(.clipboard) || tiles.contains(.spaceCleaner) { return 48 }
         return 52
     }
 
@@ -552,7 +555,7 @@ struct OverviewView: View {
         switch tile {
         case .hidpi, .keepAwake, .keyboardLock:
             return 14
-        case .scrollReverser, .clipboard:
+        case .scrollReverser, .clipboard, .spaceCleaner:
             return 15
         default:
             return 16
@@ -585,6 +588,8 @@ struct OverviewView: View {
             keyboardLockTile(span: span, height: height, isEditing: isEditing)
         case .clipboard:
             clipboardTile(span: span, height: height, isEditing: isEditing)
+        case .spaceCleaner:
+            spaceCleanerTile(span: span, height: height, isEditing: isEditing)
         case .volume:
             volumeTile(height: height, isEditing: isEditing)
         case .telemetry:
@@ -1047,6 +1052,77 @@ struct OverviewView: View {
                 onNavigate(.clipboard)
             }
         }
+    }
+
+    private func spaceCleanerTile(span: Int, height: CGFloat, isEditing: Bool) -> some View {
+        Group {
+            if span == 1 {
+                VStack(spacing: 3) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(spaceCleanerStore.totalReclaimableBytes > 0 ? ConsoleTheme.accent : Color.primary)
+                    Text("空间清理")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+            } else {
+                HStack(spacing: 9) {
+                    ZStack {
+                        if spaceCleanerStore.totalReclaimableBytes > 0 {
+                            Circle()
+                                .fill(ConsoleTheme.accent)
+                                .frame(width: 28, height: 28)
+                        } else {
+                            GlassNeutralCircle(size: 28) { EmptyView() }
+                        }
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(spaceCleanerStore.totalReclaimableBytes > 0 ? Color.white : Color.primary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("空间清理")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Text(spaceCleanerStore.overviewSubtitle)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(spaceCleanerStore.totalReclaimableBytes > 0 ? ConsoleTheme.accent : Color.primary.opacity(0.68))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    if span >= 4 && spaceCleanerStore.hasScanned && spaceCleanerStore.totalReclaimableBytes > 0 {
+                        Text("\(spaceCleanerStore.totalItemCount) 项")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.primary.opacity(0.08)))
+                    }
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 10)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .glassBentoCard(cornerRadius: 15)
+        .opacity(spaceCleanerHover.isHovering && !isEditing ? 0.92 : 1.0)
+        .contentShape(Rectangle())
+        .onHover { spaceCleanerHover.isHovering = $0 }
+        .onTapGesture {
+            if canTriggerTileTap(isEditing: isEditing) {
+                onNavigate(.spaceCleaner)
+            }
+        }
+        .help("扫描并勾选清理缓存、开发构建产物、安装包与大文件")
     }
 
     private func volumeTile(height: CGFloat, isEditing: Bool) -> some View {

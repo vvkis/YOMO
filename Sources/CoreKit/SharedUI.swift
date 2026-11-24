@@ -27,6 +27,7 @@ public enum OverviewTileID: String, CaseIterable, Identifiable, Codable, Sendabl
     case scrollReverser = "scrollReverser"
     case keyboardLock = "keyboardLock"
     case clipboard = "clipboard"
+    case spaceCleaner = "spaceCleaner"
     case volume = "volume"
     case telemetry = "telemetry"
 
@@ -38,6 +39,7 @@ public enum OverviewTileID: String, CaseIterable, Identifiable, Codable, Sendabl
         .bluetoothAudio, .hidpi, .keepAwake,
         .scrollReverser, .keyboardLock,
         .clipboard,
+        .spaceCleaner,
         .volume,
         .telemetry
     ]
@@ -51,7 +53,7 @@ public enum OverviewTileID: String, CaseIterable, Identifiable, Codable, Sendabl
             return 2
         case .scrollReverser:
             return 3
-        case .clipboard, .volume, .telemetry:
+        case .clipboard, .spaceCleaner, .volume, .telemetry:
             return 4
         }
     }
@@ -59,7 +61,7 @@ public enum OverviewTileID: String, CaseIterable, Identifiable, Codable, Sendabl
     /// Supported column spans that the user can toggle between in layout editing mode
     public var supportedColSpans: [Int] {
         switch self {
-        case .hidpi, .keepAwake, .keyboardLock:
+        case .hidpi, .keepAwake, .keyboardLock, .spaceCleaner:
             return [1, 2, 4]
         case .wifi, .battery, .bluetoothAudio:
             return [2, 4]
@@ -86,6 +88,7 @@ public enum OverviewTileID: String, CaseIterable, Identifiable, Codable, Sendabl
         case .scrollReverser: return "滚轮翻转"
         case .keyboardLock: return "键盘锁"
         case .clipboard: return "历史剪贴板"
+        case .spaceCleaner: return "空间清理"
         case .volume: return "声音输出"
         case .telemetry: return "系统占用"
         }
@@ -113,6 +116,9 @@ public final class ModuleSettings: ObservableObject {
         willSet { objectWillChange.send() }
     }
     @AppStorage("module.keyboardlock.enabled") public var keyboardLockEnabled: Bool = true {
+        willSet { objectWillChange.send() }
+    }
+    @AppStorage("module.spacecleaner.enabled") public var spaceCleanerEnabled: Bool = true {
         willSet { objectWillChange.send() }
     }
     @AppStorage("glass.appearance") public var glassAppearanceRaw: String = GlassAppearanceMode.dark.rawValue {
@@ -200,6 +206,8 @@ public final class ModuleSettings: ObservableObject {
             return keyboardLockEnabled
         case .clipboard:
             return clipboardEnabled
+        case .spaceCleaner:
+            return spaceCleanerEnabled
         }
     }
 
