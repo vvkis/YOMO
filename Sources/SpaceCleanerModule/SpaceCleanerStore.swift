@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import SwiftUI
+import ServiceManagement
 import CoreKit
 
 // MARK: - Domain Models
@@ -137,6 +138,7 @@ public enum SpaceCleanerConsoleTab: String, CaseIterable, Identifiable {
 }
 
 public enum StartupItemScope: String, CaseIterable, Identifiable, Sendable {
+    case selfLoginItem
     case userLaunchAgent
     case globalLaunchAgent
     case globalLaunchDaemon
@@ -146,6 +148,7 @@ public enum StartupItemScope: String, CaseIterable, Identifiable, Sendable {
 
     public var badgeTitle: String {
         switch self {
+        case .selfLoginItem: return "本机登录项"
         case .userLaunchAgent: return "用户代理"
         case .globalLaunchAgent: return "系统代理"
         case .globalLaunchDaemon: return "系统守护"
@@ -155,6 +158,7 @@ public enum StartupItemScope: String, CaseIterable, Identifiable, Sendable {
 
     public var tintColor: Color {
         switch self {
+        case .selfLoginItem: return ConsoleTheme.accent
         case .userLaunchAgent: return .blue
         case .globalLaunchAgent: return .indigo
         case .globalLaunchDaemon: return .purple
@@ -468,6 +472,7 @@ public final class SpaceCleanerStore: ObservableObject {
     private var scanGeneration: UInt64 = 0
     private let workQueue = DispatchQueue(label: "com.yomo.spacecleaner.worker", qos: .userInitiated)
     private let startupIconCache = NSCache<NSString, NSImage>()
+    public var onSelfLoginItemChanged: (() -> Void)?
 
     public init() {}
 
@@ -805,6 +810,9 @@ public final class SpaceCleanerStore: ObservableObject {
                 self.togglingStartupItemID = nil
                 self.startupItems = updatedItems
                 self.startupStatusMessage = outcome.message
+                if itemCopy.scope == .selfLoginItem {
+                    self.onSelfLoginItemChanged?()
+                }
             }
         }
     }
@@ -815,6 +823,7 @@ public final class SpaceCleanerStore: ObservableObject {
         guard !toggleable.isEmpty, togglingStartupItemID == nil else { return }
         togglingStartupItemID = group.id
         let groupName = group.displayName
+        let includesSelf = toggleable.contains { $0.scope == .selfLoginItem }
         let runningSnap = Self.snapshotRunningProcesses()
 
         workQueue.async { [weak self] in
@@ -826,6 +835,9 @@ public final class SpaceCleanerStore: ObservableObject {
                 self.togglingStartupItemID = nil
                 self.startupItems = updatedItems
                 self.startupStatusMessage = outcome.message
+                if includesSelf {
+                    self.onSelfLoginItemChanged?()
+                }
             }
         }
     }
@@ -2271,7 +2283,7 @@ private enum SpaceCleanerEngine {
                     case .globalLaunchDaemon:
                         if let ov = systemDisabledOverrides[label] { return !ov }
                         return !disabledInPlist
-                    case .appLoginItem:
+                    case .appLoginItem, .selfLoginItem:
                         return !disabledInPlist
                     }
                 }()
@@ -2427,6 +2439,30 @@ private enum SpaceCleanerEngine {
             }
         }
 
+        // Include YOMO's own SMAppService.mainApp login item so users can inspect & toggle YOMO right here too
+        let selfStatus = SMAppService.mainApp.status
+        let selfBundlePath = Bundle.main.bundleURL.standardizedFileURL.path
+        let selfBid = Bundle.main.bundleIdentifier ?? "com.yomo.suite"
+        results.append(
+            StartupItemInfo(
+                id: "self::SMAppService.mainApp",
+                label: selfBid,
+                displayName: "YOMO",
+                scope: .selfLoginItem,
+                sourcePath: selfBundlePath,
+                executablePath: Bundle.main.executablePath,
+                appBundlePath: selfBundlePath,
+                runAtLoad: true,
+                keepAlive: false,
+                isEnabled: selfStatus == .enabled,
+                isStoredInDisabledVault: false,
+                isRunning: true,
+                isOrphanedBinary: false,
+                canToggleDirectly: true,
+                canMoveToTrash: false
+            )
+        )
+
         // Sort: user-toggleable first (or orphaned zombies), then enabled/running, then alphabetical
         return results.sorted { a, b in
             if a.isOrphanedBinary != b.isOrphanedBinary { return a.isOrphanedBinary }
@@ -2442,6 +2478,7 @@ private enum SpaceCleanerEngine {
     /// - Global LaunchAgents (`/Library/LaunchAgents`): `launchctl enable/disable` + `bootout/bootstrap` in `gui/<uid>` (zero password).
     /// - Global LaunchDaemons (`/Library/LaunchDaemons`): macOS native Touch ID / admin sheet via SecurityAgent (zero permanent root daemon).
     static func toggleStartupItems(_ items: [StartupItemInfo], enabled: Bool, groupLabel: String) -> (ok: Bool, message: String) {
+        let selfItems = items.filter { $0.scope == .selfLoginItem }
         let userAgents = items.filter { $0.scope == .userLaunchAgent }
         let globalAgents = items.filter { $0.scope == .globalLaunchAgent }
         let systemDaemons = items.filter { $0.scope == .globalLaunchDaemon }
@@ -2449,6 +2486,19 @@ private enum SpaceCleanerEngine {
         let uid = getuid()
         let guiDomain = "gui/\(uid)"
         var errors: [String] = []
+
+        // 0. YOMO's own SMAppService.mainApp login item (native zero-password API)
+        if !selfItems.isEmpty {
+            do {
+                if enabled {
+                    try SMAppService.mainApp.register()
+                } else {
+                    try SMAppService.mainApp.unregister()
+                }
+            } catch {
+                errors.append("切换「YOMO」开机自启失败：\(error.localizedDescription)")
+            }
+        }
 
         // 1. User-owned LaunchAgents (zero password)
         for item in userAgents {

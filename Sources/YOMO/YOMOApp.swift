@@ -42,7 +42,8 @@ private struct BadgeRenderKey: Equatable {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let statusItemAutosaveName = "YOMOStatusItem"
+    private static let statusItemBaseAutosaveName = "YOMOStatusItem"
+    private static let statusItemEpochDefaultsKey = "yomo.statusItemSlotEpoch"
     private var statusItem: NSStatusItem!
     private var statusItemGeneration: UInt64 = 0
     private var panel: GlassPopoverPanel!
@@ -81,6 +82,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyboardLockStore = KeyboardLockStore()
         keyboardLockStore.syncWithModuleEnabled(moduleSettings.keyboardLockEnabled)
         spaceCleanerStore = SpaceCleanerStore()
+        spaceCleanerStore.onSelfLoginItemChanged = { [weak self] in
+            self?.duoBarStore.refreshLaunchAtLoginState()
+        }
 
         // 1. Setup single Menu Bar Status Item (persisted autosaveName + optional right-edge priority)
         configureStatusItem(forceRightPosition: duoBarStore.prefs.pinStatusItemRight)
@@ -214,8 +218,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if panel?.isEffectivelyVisible == true {
                 panel.dismissAnimated()
             }
-            // Per NSStatusItem.h: setting autosaveName to nil clears saved position state in AppKit/MenuBarAgent
-            // so a previous manual ⌘-drag coordinate does not override the requested right-edge position.
             existing.autosaveName = nil
             NSStatusBar.system.removeStatusItem(existing)
             statusItem = nil
@@ -224,18 +226,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let createItem: @MainActor @Sendable () -> Void = { [weak self] in
             guard let self, self.statusItemGeneration == gen else { return }
 
+            let defaults = UserDefaults.standard
+            var epoch = max(1, defaults.integer(forKey: Self.statusItemEpochDefaultsKey))
+
             if forceRightPosition {
-                // AppKit sorts NSStatusItem from right to left by ascending "NSStatusItem Preferred Position <autosaveName>".
-                // 212pt sits cleanly to the left of macOS's default right-side system cluster (Clock + Control Center + Spotlight)
-                // and to the right of all third-party apps.
+                // macOS MenuBarAgent caches manual ⌘-drag coordinates per (bundleID, autosaveName) inside its daemon.
+                // Rotating to a fresh autosaveName epoch clears stale drag history so MenuBarAgent immediately honors
+                // our 212pt preferred position (rightmost third-party slot, immediately left of Spotlight) without restart.
+                defaults.removeObject(forKey: "NSStatusItem Preferred Position \(Self.statusItemBaseAutosaveName)")
+                defaults.removeObject(forKey: "NSStatusItem Preferred Position \(Self.statusItemBaseAutosaveName)-\(epoch)")
+                epoch += 1
+                defaults.set(epoch, forKey: Self.statusItemEpochDefaultsKey)
+            }
+
+            let activeAutosaveName = "\(Self.statusItemBaseAutosaveName)-\(epoch)"
+            if forceRightPosition {
                 let targetOffset = 212.0
-                UserDefaults.standard.set(targetOffset, forKey: "NSStatusItem Preferred Position \(self.statusItemAutosaveName)")
-                UserDefaults.standard.set(targetOffset, forKey: "NSStatusItem Preferred Position Item-0")
+                defaults.set(targetOffset, forKey: "NSStatusItem Preferred Position \(activeAutosaveName)")
+                defaults.set(targetOffset, forKey: "NSStatusItem Preferred Position Item-0")
                 CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication)
             }
 
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            item.autosaveName = self.statusItemAutosaveName
+            item.autosaveName = activeAutosaveName
             if let button = item.button {
                 button.imagePosition = .imageOnly
                 button.imageScaling = .scaleNone
@@ -250,7 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if hadExisting {
-            // Yield briefly so MenuBarAgent finishes tearing down the old status item before reading the fresh preferred position.
+            // Yield briefly so MenuBarAgent finishes tearing down the old status item before creating the new epoch slot.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: createItem)
         } else {
             createItem()
