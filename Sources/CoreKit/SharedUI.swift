@@ -646,3 +646,19 @@ public enum Formatters {
         return "\(val)\(unit)"
     }
 }
+
+public enum DisplayPowerState {
+    /// Returns `true` when every active display is asleep (e.g. lid closed, screen off, or macOS Dark Wake / Power Nap).
+    /// Used to avoid mistakenly restarting background timers on `NSWorkspace.didWakeNotification` during Dark Wake.
+    public static func areAllDisplaysAsleep() -> Bool {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {
+            return CGDisplayIsAsleep(CGMainDisplayID()) != 0
+        }
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &displays, &count) == .success, count > 0 else {
+            return CGDisplayIsAsleep(CGMainDisplayID()) != 0
+        }
+        return displays.prefix(Int(count)).allSatisfy { CGDisplayIsAsleep($0) != 0 }
+    }
+}

@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import AppKit
 import ServiceManagement
+import CoreKit
 
 public enum PopoverPage: Equatable {
     case overview
@@ -115,7 +116,7 @@ public final class DuoBarStore: ObservableObject {
 
         batteryService.onPowerSourceChanged = { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, !self.isScreenAsleep else { return }
                 self.beginPowerSettle()
                 self.refreshBatteryState(throttled: true)
             }
@@ -123,7 +124,7 @@ public final class DuoBarStore: ObservableObject {
 
         wifiService.onWiFiEventChanged = { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, !self.isScreenAsleep else { return }
                 self.refreshWiFiQuickState(throttled: true)
                 if self.isPopoverOpen && self.currentPage == .wifi && !self.wifi.isScanning {
                     self.scanNearbyWiFi()
@@ -133,7 +134,7 @@ public final class DuoBarStore: ObservableObject {
 
         wifiService.onAuthorizationChanged = { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, !self.isScreenAsleep else { return }
                 self.refreshWiFiQuickState(throttled: false)
                 if self.isPopoverOpen && self.currentPage == .wifi {
                     self.scanNearbyWiFi()
@@ -206,9 +207,14 @@ public final class DuoBarStore: ObservableObject {
         }
 
         for name in wakeNames {
-            let obs = nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+            let obs = nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                let notifName = note.name
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    // Ignore macOS Dark Wake (Power Nap) when displays remain asleep so background timers stay dead-quiet
+                    if notifName == NSWorkspace.didWakeNotification && DisplayPowerState.areAllDisplaysAsleep() {
+                        return
+                    }
                     self.isScreenAsleep = false
                     self.refreshAll(includeHeavy: self.isUIActive, forcePublish: self.isUIActive)
                     self.restartTimer()

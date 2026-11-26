@@ -7,6 +7,7 @@ import CoreGraphics
 import ApplicationServices
 import ImageIO
 import Vision
+import CoreKit
 
 public struct ClipboardBarcodeItem: Identifiable, Hashable, Sendable {
     public let id: UUID
@@ -1085,9 +1086,14 @@ public final class ClipboardStore: ObservableObject {
             workspaceObservers.append(obs)
         }
         for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.didWakeNotification] {
-            let obs = nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+            let obs = nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                let notifName = note.name
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    // Ignore macOS Dark Wake (Power Nap) when displays remain asleep so pasteboard polling stays paused
+                    if notifName == NSWorkspace.didWakeNotification && DisplayPowerState.areAllDisplaysAsleep() {
+                        return
+                    }
                     self.isScreenAsleep = false
                     if self.isModuleEnabled {
                         self.purgeExpiredIfDue(force: true)
