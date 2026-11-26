@@ -6,9 +6,9 @@ public enum StatusBadgeRenderer {
     /// Left ring occupies x: 0.6 ... 22.2 (center 11.4) with bold stroke for crisp menu bar legibility
     private static let ringCenterX: CGFloat = 11.4
     private static let ringRadius: CGFloat = 9.35
-    private static let openRingRadius: CGFloat = 8.75
+    private static let openRingRadius: CGFloat = 9.15
     private static let openRingLineWidth: CGFloat = 2.85
-    private static let capsuleTextX: CGFloat = 26.0
+    private static let capsuleTextX: CGFloat = 25.0
     private static let capsuleArrowCenterOffsetX: CGFloat = 2.2
     private static let capsuleSpeedTextOffsetX: CGFloat = 6.0
 
@@ -17,12 +17,9 @@ public enum StatusBadgeRenderer {
     private static let bottomValueFont = NSFont.monospacedDigitSystemFont(ofSize: 9.8, weight: .semibold)
     private static let bottomUnitFont = NSFont.systemFont(ofSize: 8.4, weight: .bold)
 
-    /// Prominent bold monospaced-digit SF Pro for the wide open-top battery ring so percentage
-    /// reads effortlessly at a glance alongside the right-hand memory readout.
-    private static let openRingTwoDigitFont = NSFont.monospacedDigitSystemFont(ofSize: 9.6, weight: .bold)
-    private static let openRingTwoPercentFont = NSFont.systemFont(ofSize: 7.2, weight: .bold)
-    private static let openRingThreeDigitFont: NSFont = makeCondensedMonoBoldFont(size: 8.8)
-    private static let openRingThreePercentFont = NSFont.systemFont(ofSize: 6.4, weight: .bold)
+    /// Prominent bold monospaced-digit SF Pro centered symmetrically in the wide open-top battery ring.
+    private static let openRingTwoDigitFont = NSFont.monospacedDigitSystemFont(ofSize: 9.8, weight: .bold)
+    private static let openRingThreeDigitFont: NSFont = makeCondensedMonoBoldFont(size: 9.2)
 
     private static func makeCondensedMonoBoldFont(size: CGFloat) -> NSFont {
         let base = NSFont.systemFont(ofSize: size, weight: .bold, width: .condensed)
@@ -213,7 +210,7 @@ public enum StatusBadgeRenderer {
                     let botAttr = capsuleBotAttr!
 
                     if showBatteryPercentInRing {
-                        let center = CGPoint(x: ringCenterX, y: 10.2)
+                        let center = CGPoint(x: ringCenterX, y: 11.1)
                         let pctTextColor: NSColor = (semanticColor && battery.percentage <= 20 && !battery.showsChargingIndicator)
                             ? .systemRed
                             : fg
@@ -229,7 +226,7 @@ public enum StatusBadgeRenderer {
                         )
                         drawWiFiGlyph(
                             ctx: ctx,
-                            center: CGPoint(x: center.x, y: center.y - 0.5),
+                            center: CGPoint(x: center.x, y: center.y - 1.0),
                             scale: 0.88,
                             signalBars: wifi.signalBars,
                             poweredOn: wifi.isPoweredOn,
@@ -392,7 +389,7 @@ public enum StatusBadgeRenderer {
         ctx.restoreGState()
     }
 
-    /// Open-top battery gauge ring (wide top aperture + bold prominent percentage readout).
+    /// Open-top battery gauge ring (symmetric wide top aperture + bold centered battery digits without `%`).
     private static func drawOpenTopBatteryRing(
         ctx: CGContext,
         center: CGPoint,
@@ -406,10 +403,9 @@ public enum StatusBadgeRenderer {
         let clampedPct = min(100, max(0, percentage))
         let isThreeDigits = clampedPct >= 100
         let numFont = isThreeDigits ? openRingThreeDigitFont : openRingTwoDigitFont
-        let pctFont = isThreeDigits ? openRingThreePercentFont : openRingTwoPercentFont
-        let kern: CGFloat = isThreeDigits ? -0.35 : -0.25
+        let kern: CGFloat = isThreeDigits ? -0.30 : -0.20
 
-        let attrStr = NSMutableAttributedString(
+        let attrStr = NSAttributedString(
             string: "\(clampedPct)",
             attributes: [
                 .font: numFont,
@@ -417,17 +413,10 @@ public enum StatusBadgeRenderer {
                 .kern: kern
             ]
         )
-        attrStr.append(NSAttributedString(
-            string: "%",
-            attributes: [
-                .font: pctFont,
-                .foregroundColor: textColor.withAlphaComponent(0.90)
-            ]
-        ))
         let textSize = attrStr.size()
 
-        // Generous ~112°–120° top opening so bold battery percentage sits cleanly above the arc end-caps
-        let gapHalfDeg: Double = isThreeDigits ? 60.0 : 56.0
+        // Symmetric wide top aperture (~116° for 1–2 digits, ~126° for 100) cradling the bold digits evenly
+        let gapHalfDeg: Double = isThreeDigits ? 63.0 : 58.0
         let arcSpan = 360.0 - 2.0 * gapHalfDeg
 
         drawSegmentArc(
@@ -442,10 +431,11 @@ public enum StatusBadgeRenderer {
             color: ringColor
         )
 
-        // Position baseline cleanly just above the rounded top arc end-caps while keeping cap top inside 24pt
-        let arcCapTopY = center.y + radius * CGFloat(cos(gapHalfDeg * .pi / 180.0)) + (lineWidth * 0.5)
-        let baselineY = min(23.7 - numFont.capHeight, arcCapTopY + 0.35)
-        let textX = center.x - textSize.width / 2.0 + 0.35
+        // Center digits symmetrically right inside the upper opening, clear of both arc end-caps and the Wi-Fi glyph
+        let arcEndY = center.y + radius * CGFloat(cos(gapHalfDeg * .pi / 180.0))
+        let targetMidY = min(23.5 - numFont.capHeight * 0.5, arcEndY + (lineWidth * 0.5) + (numFont.capHeight * 0.34))
+        let baselineY = targetMidY - (numFont.capHeight * 0.5)
+        let textX = center.x - textSize.width / 2.0
         let textY = baselineY + numFont.descender
         attrStr.draw(at: NSPoint(x: textX, y: textY))
     }
