@@ -211,20 +211,9 @@ public enum StatusBadgeRenderer {
 
                     if showBatteryPercentInRing {
                         let center = CGPoint(x: ringCenterX, y: 11.1)
-                        let pctTextColor: NSColor = {
-                            guard semanticColor else { return fg }
-                            if battery.showsChargingIndicator {
-                                // Distinct two-tone pairing against the saturated emerald ring:
-                                // luminous mint-green on dark menu bars, deep crisp emerald on light menu bars.
-                                return isDarkMenuBar
-                                    ? NSColor(srgbRed: 0.45, green: 0.98, blue: 0.62, alpha: 1.0)
-                                    : NSColor(srgbRed: 0.06, green: 0.56, blue: 0.25, alpha: 1.0)
-                            }
-                            if battery.percentage <= 20 {
-                                return .systemRed
-                            }
-                            return fg
-                        }()
+                        let pctTextColor: NSColor = (semanticColor && battery.percentage <= 20 && !battery.showsChargingIndicator)
+                            ? .systemRed
+                            : fg
                         drawOpenTopBatteryRing(
                             ctx: ctx,
                             center: center,
